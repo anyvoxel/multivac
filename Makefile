@@ -32,6 +32,8 @@ export SHELLOPTS := errexit
 CMD_DIR := ./cmd/$(NAME)
 OUTPUT_DIR := ./bin
 BUILD_DIR := ./build
+WEB_DIR := ./web
+WEB_EMBED_DIR := ./internal/webui/dist
 
 IMAGE_NAME := $(IMAGE_PREFIX)$(NAME)$(IMAGE_SUFFIX)
 
@@ -57,6 +59,14 @@ export GOFLAGS ?= -count=1
 
 build: build-local
 
+.PHONY: web-build
+web-build:
+	@cd $(WEB_DIR) && npm install
+	@cd $(WEB_DIR) && npm run build
+	@rm -rf $(WEB_EMBED_DIR)
+	@mkdir -p $(WEB_EMBED_DIR)
+	@cp -R $(WEB_DIR)/dist/* $(WEB_EMBED_DIR)/
+
 lint: $(GOLANGCI_LINT)
 	$(GOLANGCI_LINT) --version
 	@$(GOLANGCI_LINT) run -v
@@ -71,6 +81,7 @@ test:
 	@go tool cover -func coverage.out | tail -n 1 | awk '{ print "Total coverage: " $$3 }'
 
 build-local:
+	@$(MAKE) web-build
 	@mkdir -p $(OUTPUT_DIR)
 	@go build -v -o $(OUTPUT_DIR)/$(NAME) \
 	  -ldflags "-s -w -X $(ROOT)/pkg/utils/version.module=$(NAME) \

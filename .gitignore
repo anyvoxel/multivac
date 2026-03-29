@@ -33,3 +33,12 @@ go.work.sum
 
 # Project outputs
 bin/
+
+# Local sqlite database
+*.sqlite
+*.sqlite3
+*.db
+
+# Frontend build outputs
+web/dist/
+internal/webui/dist/

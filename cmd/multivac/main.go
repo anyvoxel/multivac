@@ -7,10 +7,20 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"
+	"github.com/jmoiron/sqlx"
 
+	"github.com/anyvoxel/multivac/internal/webui"
+	"github.com/anyvoxel/multivac/pkg/project/application"
+	"github.com/anyvoxel/multivac/pkg/project/infra/sqlite"
+	projecthttp "github.com/anyvoxel/multivac/pkg/project/interfaces/http"
+	taskapp "github.com/anyvoxel/multivac/pkg/task/application"
+	tasksqlite "github.com/anyvoxel/multivac/pkg/task/infra/sqlite"
+	taskhttp "github.com/anyvoxel/multivac/pkg/task/interfaces/http"
 	"github.com/anyvoxel/multivac/pkg/utils/version"
 )
 
@@ -19,11 +29,42 @@ func main() {
 	if addr == "" {
 		addr = ":8080"
 	}
+	dbPath := os.Getenv("SQLITE_PATH")
+	if dbPath == "" {
+		dbPath = "./multivac.sqlite"
+	}
+
+	if err := run(addr, dbPath); err != nil {
+		log.Fatalf("run server: %v", err)
+	}
+}
+
+func run(addr, dbPath string) error {
+	db, projHandler, taskHandler, err := setupServices(dbPath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = db.Close() }()
 
 	h := server.New(server.WithHostPorts(addr))
 
+	// Simple CORS for local web development.
+	h.Use(func(c context.Context, ctx *app.RequestContext) {
+		ctx.Header("Access-Control-Allow-Origin", "*")
+		ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
+		ctx.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		ctx.Header("Access-Control-Max-Age", "86400")
+		if string(ctx.Method()) == http.MethodOptions {
+			ctx.Status(http.StatusNoContent)
+			ctx.Abort()
+			return
+		}
+		ctx.Next(c)
+	})
+
 	h.GET("/", func(_ context.Context, ctx *app.RequestContext) {
-		ctx.String(http.StatusOK, "multivac\n")
+		ctx.Redirect(http.StatusFound, []byte("/index.html"))
+		ctx.Abort()
 	})
 	h.GET("/healthz", func(_ context.Context, ctx *app.RequestContext) {
 		ctx.String(http.StatusOK, "ok\n")
@@ -37,6 +78,81 @@ func main() {
 		ctx.Data(http.StatusOK, "application/json; charset=utf-8", b)
 	})
 
+	api := h.Group("/api/v1")
+	api.POST("/projects", projHandler.Create)
+	api.GET("/projects", projHandler.List)
+	api.GET("/projects/:id", projHandler.Get)
+	api.PUT("/projects/:id", projHandler.Update)
+	api.PATCH("/projects/:id/status", projHandler.SetStatus)
+	api.DELETE("/projects/:id", projHandler.Delete)
+
+	api.POST("/tasks", taskHandler.Create)
+	api.GET("/tasks", taskHandler.List)
+	api.GET("/tasks/:id", taskHandler.Get)
+	api.PUT("/tasks/:id", taskHandler.Update)
+	api.PATCH("/tasks/:id/status", taskHandler.SetStatus)
+	api.DELETE("/tasks/:id", taskHandler.Delete)
+	api.GET("/projects/:projectId/tasks", taskHandler.ListByProject)
+
+	// Web UI (embedded). It serves SPA under /.
+	h.GET("/*filepath", func(_ context.Context, ctx *app.RequestContext) {
+		p := ctx.Param("filepath")
+		if p == "" || p == "/" {
+			ctx.Redirect(http.StatusFound, []byte("/index.html"))
+			ctx.Abort()
+			return
+		}
+		if !strings.HasPrefix(p, "/") {
+			p = "/" + p
+		}
+		asset, err := webui.ReadAsset(p)
+		if err != nil {
+			ctx.Status(http.StatusNotFound)
+			return
+		}
+		ctx.Header("Content-Type", asset.ContentType)
+		if asset.Immutable {
+			ctx.Header("Cache-Control", "public, max-age=31536000, immutable")
+		}
+		ctx.Data(http.StatusOK, asset.ContentType, asset.Body)
+	})
+
 	log.Printf("http server listening on %s", addr)
 	h.Spin()
+	return nil
+}
+
+func setupServices(dbPath string) (*sqlx.DB, *projecthttp.Handler, *taskhttp.Handler, error) {
+	db, err := sqlx.Open("sqlite3", dbPath)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	db.SetMaxOpenConns(1)
+	db.SetConnMaxLifetime(time.Minute)
+	if err := db.Ping(); err != nil {
+		_ = db.Close()
+		return nil, nil, nil, err
+	}
+	if _, err := db.Exec("PRAGMA foreign_keys = ON;"); err != nil {
+		_ = db.Close()
+		return nil, nil, nil, err
+	}
+
+	projRepo := sqlite.NewRepository(db)
+	projSvc := application.NewService(projRepo)
+	if err := projSvc.Migrate(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, nil, nil, err
+	}
+	projHandler := projecthttp.NewHandler(projSvc)
+
+	taskRepo := tasksqlite.NewRepository(db)
+	taskSvc := taskapp.NewService(taskRepo)
+	if err := taskSvc.Migrate(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, nil, nil, err
+	}
+	taskHandler := taskhttp.NewHandler(taskSvc)
+
+	return db, projHandler, taskHandler, nil
 }

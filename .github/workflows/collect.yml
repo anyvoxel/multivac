@@ -1,0 +1,28 @@
+name: collect
+
+on:
+  issue_comment:
+    types: [created]
+  schedule:
+    - cron: "15 4 * * 0"
+
+jobs:
+  run:
+    name: |
+      execute-action - ${{ github.event_name == 'schedule' && 'Scheduled Run' || 'Issue Comment' }}
+    if: |
+      github.event_name == 'schedule' ||
+      (github.event_name == 'issue_comment') && contains(github.event.comment.body, '/collect')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-go@v4
+        with:
+          go-version: "1.26"
+      - name: Prepare go
+        run: |
+          go version
+          go mod download
+      - name: Test
+        run: make test
+
