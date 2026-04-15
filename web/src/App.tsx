@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 
 import {
@@ -13,11 +13,12 @@ import type { Project, ProjectStatus } from "./lib/projects";
 import {
   createTask,
   deleteTask,
+  getTask,
   listTasks,
   setTaskStatus,
   updateTask,
 } from "./lib/tasks";
-import type { Task, TaskPriority, TaskStatus } from "./lib/tasks";
+import type { SortDir, Task, TaskPriority, TaskStatus } from "./lib/tasks";
 import {
   formatDate,
   fromDateValue,
@@ -34,6 +35,9 @@ const PROJECT_STATUSES: ProjectStatus[] = [
 ];
 const TASK_STATUSES: TaskStatus[] = ["Todo", "InProgress", "Done", "Canceled"];
 const TASK_PRIORITIES: TaskPriority[] = ["P0", "High", "Medium", "Low"];
+const PAGE_SIZE_OPTIONS = [10, 20, 50];
+const LAST_TASK_PROJECT_STORAGE_KEY = "multivac:last-task-project-id";
+const EMPTY_TASK_PROJECT_SENTINEL = "__NONE__";
 
 function classNames(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -82,6 +86,10 @@ function taskPriorityLabel(p: TaskPriority): string {
     default:
       return p;
   }
+}
+
+function pageNumber(offset: number, pageSize: number): number {
+  return Math.floor(offset / pageSize) + 1;
 }
 
 function IconLogo() {
@@ -200,6 +208,20 @@ function IconClose() {
   );
 }
 
+function IconClear() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M8 8l8 8M16 8l-8 8"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
 function IconClock() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -219,6 +241,29 @@ function IconClock() {
   );
 }
 
+function IconSort(props: { dir: SortDir | null }) {
+  const activeUp = props.dir === "Asc";
+  const activeDown = props.dir === "Desc";
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+      <path
+        d="M4 5 6 3l2 2"
+        stroke={activeUp ? "currentColor" : "#9CA3AF"}
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M4 7 6 9l2-2"
+        stroke={activeDown ? "currentColor" : "#9CA3AF"}
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export default function App() {
   const [route, setRoute] = useState<Route>("projects");
 
@@ -228,9 +273,13 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
   const [projects, setProjects] = useState<Project[]>([]);
+  const [allProjects, setAllProjects] = useState<Project[]>([]);
   const [projectStatusFilter, setProjectStatusFilter] = useState<
     ProjectStatus | ""
   >("");
+  const [projectOffset, setProjectOffset] = useState(0);
+  const [projectPageSize, setProjectPageSize] = useState(PAGE_SIZE_OPTIONS[0]);
+  const [projectHasNext, setProjectHasNext] = useState(false);
 
   // Drawer state
   const [drawer, setDrawer] = useState<
@@ -248,17 +297,52 @@ export default function App() {
   // Tasks page filters
   const [taskProjectId, setTaskProjectId] = useState<string>("");
   const [taskStatusFilter, setTaskStatusFilter] = useState<TaskStatus | "">("");
+  const [taskListVersion, setTaskListVersion] = useState(0);
+  const [highlightTaskId, setHighlightTaskId] = useState<string | null>(null);
+  const [lastTaskProjectId, setLastTaskProjectId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    const stored = window.localStorage.getItem(LAST_TASK_PROJECT_STORAGE_KEY);
+    if (stored === null) return null;
+    if (stored === EMPTY_TASK_PROJECT_SENTINEL) return "";
+    return stored;
+  });
+
+  const normalizedSearch = search.trim();
+
+  useEffect(() => {
+    if (!highlightTaskId) return;
+    const timer = window.setTimeout(() => setHighlightTaskId(null), 2500);
+    return () => window.clearTimeout(timer);
+  }, [highlightTaskId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (lastTaskProjectId === null) {
+      window.localStorage.removeItem(LAST_TASK_PROJECT_STORAGE_KEY);
+      return;
+    }
+    window.localStorage.setItem(
+      LAST_TASK_PROJECT_STORAGE_KEY,
+      lastTaskProjectId === "" ? EMPTY_TASK_PROJECT_SENTINEL : lastTaskProjectId,
+    );
+  }, [lastTaskProjectId]);
 
   async function refreshProjects() {
     setLoading(true);
     setError("");
     try {
-      const list = await listProjects(
-        projectStatusFilter ? { status: projectStatusFilter } : undefined,
-      );
-      setProjects(list);
+      const list = await listProjects({
+        status: projectStatusFilter || undefined,
+        search: normalizedSearch || undefined,
+        limit: projectPageSize + 1,
+        offset: projectOffset,
+      });
+      setProjects(list.slice(0, projectPageSize));
+      setProjectHasNext(list.length > projectPageSize);
+      const all = await listProjects();
+      setAllProjects(all);
       if (taskProjectId) {
-        const still = list.find((p) => p.id === taskProjectId);
+        const still = all.find((p) => p.id === taskProjectId);
         if (!still) setTaskProjectId("");
       }
     } catch (e) {
@@ -269,26 +353,13 @@ export default function App() {
   }
 
   useEffect(() => {
+    setProjectOffset(0);
+  }, [projectStatusFilter, search, projectPageSize]);
+
+  useEffect(() => {
     void refreshProjects();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectStatusFilter]);
-
-  const filteredProjects = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return projects;
-    return projects.filter((p) => {
-      return (
-        p.name.toLowerCase().includes(q) ||
-        p.goal.toLowerCase().includes(q) ||
-        p.description.toLowerCase().includes(q)
-      );
-    });
-  }, [projects, search]);
-
-  const filteredTasksQuery = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return q;
-  }, [search]);
+  }, [projectStatusFilter, projectOffset, projectPageSize, normalizedSearch]);
 
   const pageLabel = route === "projects" ? "项目管理" : "任务管理";
 
@@ -332,7 +403,13 @@ export default function App() {
     try {
       if (mode === "create") {
         setDrawer({ type: "task", mode: "create" });
-        const defaultProject = taskProjectId || projects[0]?.id || "";
+        const rememberedProject =
+          lastTaskProjectId === ""
+            ? ""
+            : lastTaskProjectId && allProjects.some((p) => p.id === lastTaskProjectId)
+              ? lastTaskProjectId
+              : null;
+        const defaultProject = rememberedProject ?? (taskProjectId || "");
         setDrawerTask({
           id: "",
           projectId: defaultProject,
@@ -340,7 +417,7 @@ export default function App() {
           description: "",
           context: "默认",
           details: "",
-          status: "InProgress",
+          status: "Todo",
           priority: "Medium",
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -353,9 +430,7 @@ export default function App() {
         setDrawerTask(t);
         return;
       }
-      // Fallback: fetch task by listing; we keep minimal by reusing listTasks.
-      const list = await listTasks();
-      const found = list.find((x) => x.id === id) ?? null;
+      const found = await getTask(id);
       setDrawerTask(found);
     } catch (e) {
       setError(String(e));
@@ -436,11 +511,21 @@ export default function App() {
                     <IconSearch />
                   </div>
                   <input
-                    className="w-64 rounded-md border border-[#E6E8F0] bg-white py-1.5 pl-8 pr-3 text-sm outline-none focus:ring-2 focus:ring-[#4F46E5]"
+                    className="w-64 rounded-md border border-[#E6E8F0] bg-white py-1.5 pl-8 pr-9 text-sm outline-none focus:ring-2 focus:ring-[#4F46E5]"
                     placeholder="搜索..."
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                   />
+                  {search ? (
+                    <button
+                      type="button"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-[#9CA3AF] hover:text-[#6B7280]"
+                      onClick={() => setSearch("")}
+                      aria-label="清空搜索"
+                    >
+                      <IconClear />
+                    </button>
+                  ) : null}
                 </div>
                 <button
                   className="flex items-center justify-center rounded-md border border-[#E6E8F0] bg-white p-2 text-[#6B7280] hover:bg-[#F5F6FA]"
@@ -473,19 +558,28 @@ export default function App() {
 
             {route === "projects" ? (
               <ProjectsPage
-                items={filteredProjects}
+                items={projects}
                 loading={loading}
                 statusFilter={projectStatusFilter}
+                pageSize={projectPageSize}
+                offset={projectOffset}
+                hasNext={projectHasNext}
+                paginationEnabled
                 onStatusFilter={setProjectStatusFilter}
+                onPageSizeChange={setProjectPageSize}
+                onPrevPage={() => setProjectOffset((v) => Math.max(0, v - projectPageSize))}
+                onNextPage={() => setProjectOffset((v) => v + projectPageSize)}
                 onRefresh={() => void refreshProjects()}
                 onOpen={(id) => void openProjectDrawer("edit", id)}
               />
             ) : (
               <TasksPageNew
-                projects={projects}
+                projects={allProjects}
                 projectId={taskProjectId}
                 status={taskStatusFilter}
-                search={filteredTasksQuery}
+                search={normalizedSearch}
+                version={taskListVersion}
+                highlightTaskId={highlightTaskId}
                 onProjectId={setTaskProjectId}
                 onStatus={setTaskStatusFilter}
                 onOpen={(id, t) => void openTaskDrawer("edit", id, t)}
@@ -540,12 +634,13 @@ export default function App() {
               <TaskDrawerForm
                 task={drawerTask}
                 mode={drawer.mode}
-                projects={projects}
+                projects={allProjects}
                 onChange={setDrawerTask}
                 onDelete={async () => {
                   if (!drawerTask) return;
                   if (!confirm(`确定删除 Task: ${drawerTask.name} ?`)) return;
                   await deleteTask(drawerTask.id);
+                  setTaskListVersion((v) => v + 1);
                   setDrawer({ type: "none" });
                   setDrawerTask(null);
                 }}
@@ -592,8 +687,8 @@ export default function App() {
           await setProjectStatus(drawerProject.id, status);
         }
         await refreshProjects();
-        const p = await getProject(drawerProject.id);
-        setDrawerProject(p);
+        setDrawer({ type: "none" });
+        setDrawerProject(null);
         return;
       }
 
@@ -601,8 +696,8 @@ export default function App() {
         if (!drawerTask) return;
         const dueISO = fromDateValue(drawerTask.dueAt ? toDateValue(drawerTask.dueAt) : "");
         if (drawer.mode === "create") {
-          const t = await createTask({
-            projectId: drawerTask.projectId,
+          const created = await createTask({
+            projectId: drawerTask.projectId || undefined,
             name: drawerTask.name,
             description: drawerTask.description,
             context: drawerTask.context,
@@ -611,11 +706,15 @@ export default function App() {
             status: drawerTask.status,
             dueAt: dueISO,
           });
-          setDrawer({ type: "task", mode: "edit", id: t.id });
-          setDrawerTask(t);
+          setLastTaskProjectId(drawerTask.projectId ?? "");
+          setHighlightTaskId(created.id);
+          setTaskListVersion((v) => v + 1);
+          setDrawer({ type: "none" });
+          setDrawerTask(null);
           return;
         }
         const t = await updateTask(drawerTask.id, {
+          projectId: drawerTask.projectId || undefined,
           name: drawerTask.name,
           description: drawerTask.description,
           context: drawerTask.context,
@@ -623,12 +722,13 @@ export default function App() {
           priority: drawerTask.priority,
           dueAt: dueISO ?? "",
         });
+        setLastTaskProjectId(drawerTask.projectId ?? "");
         if (t.status !== drawerTask.status) {
-          const out = await setTaskStatus(drawerTask.id, drawerTask.status);
-          setDrawerTask(out);
-        } else {
-          setDrawerTask(t);
+          await setTaskStatus(drawerTask.id, drawerTask.status);
         }
+        setTaskListVersion((v) => v + 1);
+        setDrawer({ type: "none" });
+        setDrawerTask(null);
       }
     } catch (e) {
       setError(String(e));
@@ -681,16 +781,176 @@ function Badge(props: { color: "gray" | "indigo" | "green" | "red" | "amber"; ch
   );
 }
 
+type ProjectColumnKey = "name" | "status" | "updatedAt" | "actions";
+
+type ProjectColumnWidths = Record<ProjectColumnKey, number>;
+
+type ProjectResizeState = {
+  key: ProjectColumnKey;
+  startX: number;
+  startWidth: number;
+} | null;
+
+const DEFAULT_PROJECT_COLUMN_WIDTHS: ProjectColumnWidths = {
+  name: 320,
+  status: 160,
+  updatedAt: 180,
+  actions: 120,
+};
+
+const PROJECT_COLUMN_WIDTHS_STORAGE_KEY = "multivac:project-column-widths";
+
+const MIN_PROJECT_COLUMN_WIDTHS: ProjectColumnWidths = {
+  name: 180,
+  status: 120,
+  updatedAt: 140,
+  actions: 100,
+};
+
+type TaskColumnKey = "name" | "project" | "priority" | "status" | "dueAt" | "actions";
+
+type TaskColumnWidths = Record<TaskColumnKey, number>;
+
+type TaskResizeState = {
+  key: TaskColumnKey;
+  startX: number;
+  startWidth: number;
+} | null;
+
+const DEFAULT_TASK_COLUMN_WIDTHS: TaskColumnWidths = {
+  name: 280,
+  project: 220,
+  priority: 120,
+  status: 140,
+  dueAt: 180,
+  actions: 120,
+};
+
+const TASK_COLUMN_WIDTHS_STORAGE_KEY = "multivac:task-column-widths";
+
+const MIN_TASK_COLUMN_WIDTHS: TaskColumnWidths = {
+  name: 180,
+  project: 160,
+  priority: 100,
+  status: 120,
+  dueAt: 140,
+  actions: 100,
+};
+
+function normalizeProjectColumnWidths(value: unknown): ProjectColumnWidths {
+  const widths = typeof value === "object" && value !== null ? value as Partial<Record<ProjectColumnKey, unknown>> : {};
+  return {
+    name: typeof widths.name === "number" ? Math.max(MIN_PROJECT_COLUMN_WIDTHS.name, widths.name) : DEFAULT_PROJECT_COLUMN_WIDTHS.name,
+    status: typeof widths.status === "number" ? Math.max(MIN_PROJECT_COLUMN_WIDTHS.status, widths.status) : DEFAULT_PROJECT_COLUMN_WIDTHS.status,
+    updatedAt: typeof widths.updatedAt === "number" ? Math.max(MIN_PROJECT_COLUMN_WIDTHS.updatedAt, widths.updatedAt) : DEFAULT_PROJECT_COLUMN_WIDTHS.updatedAt,
+    actions: typeof widths.actions === "number" ? Math.max(MIN_PROJECT_COLUMN_WIDTHS.actions, widths.actions) : DEFAULT_PROJECT_COLUMN_WIDTHS.actions,
+  };
+}
+
+function loadProjectColumnWidths(): ProjectColumnWidths {
+  if (typeof window === "undefined") return DEFAULT_PROJECT_COLUMN_WIDTHS;
+  try {
+    const raw = window.localStorage.getItem(PROJECT_COLUMN_WIDTHS_STORAGE_KEY);
+    if (!raw) return DEFAULT_PROJECT_COLUMN_WIDTHS;
+    return normalizeProjectColumnWidths(JSON.parse(raw));
+  } catch {
+    return DEFAULT_PROJECT_COLUMN_WIDTHS;
+  }
+}
+
+function normalizeTaskColumnWidths(value: unknown): TaskColumnWidths {
+  const widths = typeof value === "object" && value !== null ? value as Partial<Record<TaskColumnKey, unknown>> : {};
+  return {
+    name: typeof widths.name === "number" ? Math.max(MIN_TASK_COLUMN_WIDTHS.name, widths.name) : DEFAULT_TASK_COLUMN_WIDTHS.name,
+    project: typeof widths.project === "number" ? Math.max(MIN_TASK_COLUMN_WIDTHS.project, widths.project) : DEFAULT_TASK_COLUMN_WIDTHS.project,
+    priority: typeof widths.priority === "number" ? Math.max(MIN_TASK_COLUMN_WIDTHS.priority, widths.priority) : DEFAULT_TASK_COLUMN_WIDTHS.priority,
+    status: typeof widths.status === "number" ? Math.max(MIN_TASK_COLUMN_WIDTHS.status, widths.status) : DEFAULT_TASK_COLUMN_WIDTHS.status,
+    dueAt: typeof widths.dueAt === "number" ? Math.max(MIN_TASK_COLUMN_WIDTHS.dueAt, widths.dueAt) : DEFAULT_TASK_COLUMN_WIDTHS.dueAt,
+    actions: typeof widths.actions === "number" ? Math.max(MIN_TASK_COLUMN_WIDTHS.actions, widths.actions) : DEFAULT_TASK_COLUMN_WIDTHS.actions,
+  };
+}
+
+function loadTaskColumnWidths(): TaskColumnWidths {
+  if (typeof window === "undefined") return DEFAULT_TASK_COLUMN_WIDTHS;
+  try {
+    const raw = window.localStorage.getItem(TASK_COLUMN_WIDTHS_STORAGE_KEY);
+    if (!raw) return DEFAULT_TASK_COLUMN_WIDTHS;
+    return normalizeTaskColumnWidths(JSON.parse(raw));
+  } catch {
+    return DEFAULT_TASK_COLUMN_WIDTHS;
+  }
+}
+
 function ProjectsPage(props: {
   items: Project[];
   loading: boolean;
   statusFilter: ProjectStatus | "";
+  pageSize: number;
+  offset: number;
+  hasNext: boolean;
+  paginationEnabled: boolean;
   onStatusFilter: (v: ProjectStatus | "") => void;
+  onPageSizeChange: (v: number) => void;
+  onPrevPage: () => void;
+  onNextPage: () => void;
   onRefresh: () => void;
   onOpen: (id: string) => void;
 }) {
+  const [columnWidths, setColumnWidths] = useState<ProjectColumnWidths>(() => loadProjectColumnWidths());
+
+  useEffect(() => {
+    window.localStorage.setItem(PROJECT_COLUMN_WIDTHS_STORAGE_KEY, JSON.stringify(columnWidths));
+  }, [columnWidths]);
+
+  function startResize(key: ProjectColumnKey, event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+
+    const state: ProjectResizeState = {
+      key,
+      startX: event.clientX,
+      startWidth: columnWidths[key],
+    };
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const delta = moveEvent.clientX - state.startX;
+      const nextWidth = Math.max(MIN_PROJECT_COLUMN_WIDTHS[key], state.startWidth + delta);
+      setColumnWidths((current) => ({ ...current, [key]: nextWidth }));
+    };
+
+    const stopResize = () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", stopResize);
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", stopResize);
+  }
+
+  function headerCell(label: string, key: ProjectColumnKey, alignRight?: boolean) {
+    const showResizeMarker = key !== "actions";
+    return (
+      <th className={classNames("relative px-4 py-3", alignRight && "text-right")}>
+        <div className={classNames("relative", alignRight && "pr-3")}>{label}</div>
+        {showResizeMarker ? (
+          <div className="pointer-events-none absolute right-0 top-1/2 h-5 -translate-y-1/2 border-r border-[#D1D5DB]" />
+        ) : null}
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          className="absolute right-0 top-0 h-full w-2 cursor-col-resize hover:bg-[#EEF2FF]/80"
+          onPointerDown={(event) => startResize(key, event)}
+        />
+      </th>
+    );
+  }
+
   return (
-    <div className="mx-auto grid max-w-4xl gap-3">
+    <div className="mx-auto grid w-full max-w-7xl gap-3">
       <div className="flex items-center justify-between">
         <div className="text-lg font-semibold text-[#111827]">项目列表</div>
         <div className="flex items-center gap-2">
@@ -717,21 +977,26 @@ function ProjectsPage(props: {
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-[#E6E8F0] bg-white">
-        <table className="w-full text-left text-sm">
+      <div className="overflow-x-auto overflow-y-hidden rounded-lg border border-[#E6E8F0] bg-white">
+        <table className="w-full min-w-[780px] table-fixed text-left text-sm">
+          <colgroup>
+            <col style={{ width: columnWidths.name }} />
+            <col style={{ width: columnWidths.status }} />
+            <col style={{ width: columnWidths.updatedAt }} />
+            <col style={{ width: columnWidths.actions }} />
+          </colgroup>
           <thead className="bg-[#F9FAFB] text-xs text-[#6B7280]">
             <tr>
-              <th className="px-4 py-3">项目名称</th>
-              <th className="px-4 py-3">状态</th>
-              <th className="px-4 py-3">目标</th>
-              <th className="px-4 py-3">更新时间</th>
-              <th className="px-4 py-3 text-right">操作</th>
+              {headerCell("项目名称", "name")}
+              {headerCell("状态", "status")}
+              {headerCell("更新时间", "updatedAt")}
+              {headerCell("操作", "actions", true)}
             </tr>
           </thead>
           <tbody>
             {props.items.length === 0 && !props.loading ? (
               <tr>
-                <td colSpan={5} className="px-4 py-10 text-center text-[#6B7280]">
+                <td colSpan={4} className="px-4 py-10 text-center text-[#6B7280]">
                   暂无 Project
                 </td>
               </tr>
@@ -753,7 +1018,6 @@ function ProjectsPage(props: {
                     {projectStatusLabel(p.status)}
                   </Badge>
                 </td>
-                <td className="px-4 py-3 text-[#374151]">{p.goal}</td>
                 <td className="px-4 py-3 text-[#6B7280]">{formatDate(p.updatedAt)}</td>
                 <td className="px-4 py-3 text-right">
                   <button
@@ -769,6 +1033,45 @@ function ProjectsPage(props: {
           </tbody>
         </table>
       </div>
+
+      {props.paginationEnabled ? (
+        <div className="flex items-center justify-between rounded-lg border border-[#E6E8F0] bg-white px-4 py-3 text-sm">
+          <div className="flex items-center gap-2 text-[#6B7280]">
+            <span>每页显示</span>
+            <select
+              className="rounded-md border border-[#E6E8F0] bg-white px-2 py-1 text-sm text-[#374151]"
+              value={props.pageSize}
+              onChange={(e) => props.onPageSizeChange(Number(e.target.value))}
+              disabled={props.loading}
+            >
+              {PAGE_SIZE_OPTIONS.map((size) => (
+                <option key={size} value={size}>
+                  {size}
+                </option>
+              ))}
+            </select>
+            <span>第 {pageNumber(props.offset, props.pageSize)} 页</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="rounded-md border border-[#E6E8F0] bg-white px-3 py-1 text-sm text-[#374151] disabled:cursor-not-allowed disabled:text-[#9CA3AF]"
+              onClick={props.onPrevPage}
+              disabled={props.loading || props.offset === 0}
+            >
+              上一页
+            </button>
+            <button
+              type="button"
+              className="rounded-md border border-[#E6E8F0] bg-white px-3 py-1 text-sm text-[#374151] disabled:cursor-not-allowed disabled:text-[#9CA3AF]"
+              onClick={props.onNextPage}
+              disabled={props.loading || !props.hasNext}
+            >
+              下一页
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -778,6 +1081,8 @@ function TasksPageNew(props: {
   projectId: string;
   status: TaskStatus | "";
   search: string;
+  version: number;
+  highlightTaskId: string | null;
   onProjectId: (v: string) => void;
   onStatus: (v: TaskStatus | "") => void;
   onOpen: (id: string, t?: Task) => void;
@@ -785,17 +1090,100 @@ function TasksPageNew(props: {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
   const [items, setItems] = useState<Task[]>([]);
+  const [offset, setOffset] = useState(0);
+  const [pageSize, setPageSize] = useState(PAGE_SIZE_OPTIONS[0]);
+  const [hasNext, setHasNext] = useState(false);
+  const [sortDir, setSortDir] = useState<SortDir | null>(null);
+  const [columnWidths, setColumnWidths] = useState<TaskColumnWidths>(() => loadTaskColumnWidths());
+
+  useEffect(() => {
+    window.localStorage.setItem(TASK_COLUMN_WIDTHS_STORAGE_KEY, JSON.stringify(columnWidths));
+  }, [columnWidths]);
+
+  function startResize(key: TaskColumnKey, event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+
+    const state: TaskResizeState = {
+      key,
+      startX: event.clientX,
+      startWidth: columnWidths[key],
+    };
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const delta = moveEvent.clientX - state.startX;
+      const nextWidth = Math.max(MIN_TASK_COLUMN_WIDTHS[key], state.startWidth + delta);
+      setColumnWidths((current) => ({ ...current, [key]: nextWidth }));
+    };
+
+    const stopResize = () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", stopResize);
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", stopResize);
+  }
+
+  function toggleDueAtSort() {
+    setSortDir((current) => {
+      if (current === "Asc") return "Desc";
+      if (current === "Desc") return null;
+      return "Asc";
+    });
+  }
+
+  function headerCell(label: string, key: TaskColumnKey, alignRight?: boolean) {
+    const showResizeMarker = key !== "actions";
+    const isDueAt = key === "dueAt";
+    return (
+      <th className={classNames("relative px-4 py-3", alignRight && "text-right")}>
+        <div className={classNames("relative", alignRight && "pr-3")}>
+          {isDueAt ? (
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 text-inherit hover:text-[#374151]"
+              onClick={toggleDueAtSort}
+            >
+              <span>{label}</span>
+              <IconSort dir={sortDir} />
+            </button>
+          ) : (
+            label
+          )}
+        </div>
+        {showResizeMarker ? (
+          <div className="pointer-events-none absolute right-0 top-1/2 h-5 -translate-y-1/2 border-r border-[#D1D5DB]" />
+        ) : null}
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          className="absolute right-0 top-0 h-full w-2 cursor-col-resize hover:bg-[#EEF2FF]/80"
+          onPointerDown={(event) => startResize(key, event)}
+        />
+      </th>
+    );
+  }
 
   async function refresh() {
     setLoading(true);
     setError("");
     try {
-      const list = await listTasks(
-        props.projectId || props.status
-          ? { projectId: props.projectId || undefined, status: props.status || undefined }
-          : undefined,
-      );
-      setItems(list);
+      const list = await listTasks({
+        projectId: props.projectId || undefined,
+        status: props.status || undefined,
+        search: props.search || undefined,
+        sortBy: sortDir ? "DueAt" : undefined,
+        sortDir: sortDir || undefined,
+        limit: pageSize + 1,
+        offset,
+      });
+      setItems(list.slice(0, pageSize));
+      setHasNext(list.length > pageSize);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -804,20 +1192,29 @@ function TasksPageNew(props: {
   }
 
   useEffect(() => {
+    setOffset(0);
+  }, [props.projectId, props.status, props.search, sortDir, pageSize]);
+
+  useEffect(() => {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.projectId, props.status]);
+  }, [props.projectId, props.status, props.search, props.version, sortDir, offset, pageSize]);
 
-  const shown = useMemo(() => {
-    if (!props.search) return items;
-    return items.filter((t) => {
-      const q = props.search;
-      return t.name.toLowerCase().includes(q) || t.description.toLowerCase().includes(q) || t.details.toLowerCase().includes(q);
-    });
-  }, [items, props.search]);
+  const projectNameById = useMemo(() => {
+    return new Map(props.projects.map((p) => [p.id, p.name]));
+  }, [props.projects]);
+
+  useEffect(() => {
+    if (!props.highlightTaskId) return;
+    const timer = window.setTimeout(() => {
+      const row = document.getElementById(`task-row-${props.highlightTaskId}`);
+      row?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 50);
+    return () => window.clearTimeout(timer);
+  }, [props.highlightTaskId, items]);
 
   return (
-    <div className="mx-auto grid max-w-4xl gap-3">
+    <div className="mx-auto grid w-full max-w-7xl gap-3">
       <div className="flex items-center justify-between">
         <div className="text-lg font-semibold text-[#111827]">任务列表</div>
         <div className="flex items-center gap-2">
@@ -862,30 +1259,47 @@ function TasksPageNew(props: {
         </div>
       ) : null}
 
-      <div className="overflow-hidden rounded-lg border border-[#E6E8F0] bg-white">
-        <table className="w-full text-left text-sm">
+      <div className="overflow-x-auto overflow-y-hidden rounded-lg border border-[#E6E8F0] bg-white">
+        <table className="w-full min-w-[980px] table-fixed text-left text-sm">
+          <colgroup>
+            <col style={{ width: columnWidths.name }} />
+            <col style={{ width: columnWidths.project }} />
+            <col style={{ width: columnWidths.priority }} />
+            <col style={{ width: columnWidths.status }} />
+            <col style={{ width: columnWidths.dueAt }} />
+            <col style={{ width: columnWidths.actions }} />
+          </colgroup>
           <thead className="bg-[#F9FAFB] text-xs text-[#6B7280]">
             <tr>
-              <th className="px-4 py-3">任务名称</th>
-              <th className="px-4 py-3">优先级</th>
-              <th className="px-4 py-3">状态</th>
-              <th className="px-4 py-3">截止日期</th>
-              <th className="px-4 py-3 text-right">操作</th>
+              {headerCell("任务名称", "name")}
+              {headerCell("所属项目", "project")}
+              {headerCell("优先级", "priority")}
+              {headerCell("状态", "status")}
+              {headerCell("截止日期", "dueAt")}
+              {headerCell("操作", "actions", true)}
             </tr>
           </thead>
           <tbody>
-            {shown.length === 0 && !loading ? (
+            {items.length === 0 && !loading ? (
               <tr>
-                <td colSpan={5} className="px-4 py-10 text-center text-[#6B7280]">
+                <td colSpan={6} className="px-4 py-10 text-center text-[#6B7280]">
                   暂无 Task
                 </td>
               </tr>
             ) : null}
-            {shown.map((t) => (
-              <tr key={t.id} className="border-t border-[#E6E8F0] hover:bg-[#F9FAFB]">
+            {items.map((t) => (
+              <tr
+                key={t.id}
+                id={`task-row-${t.id}`}
+                className={classNames(
+                  "border-t border-[#E6E8F0] hover:bg-[#F9FAFB]",
+                  props.highlightTaskId === t.id && "bg-[#EEF2FF] transition-colors",
+                )}
+              >
                 <td className="px-4 py-3">
                   <div className="font-medium text-[#111827]">{t.name}</div>
                 </td>
+                <td className="px-4 py-3 text-[#6B7280]">{projectNameById.get(t.projectId ?? "") ?? "-"}</td>
                 <td className="px-4 py-3">
                   <Badge
                     color={t.priority === "P0" || t.priority === "High" ? "red" : t.priority === "Medium" ? "amber" : "gray"}
@@ -920,6 +1334,43 @@ function TasksPageNew(props: {
             ))}
           </tbody>
         </table>
+      </div>
+
+      <div className="flex items-center justify-between rounded-lg border border-[#E6E8F0] bg-white px-4 py-3 text-sm">
+        <div className="flex items-center gap-2 text-[#6B7280]">
+          <span>每页显示</span>
+          <select
+            className="rounded-md border border-[#E6E8F0] bg-white px-2 py-1 text-sm text-[#374151]"
+            value={pageSize}
+            onChange={(e) => setPageSize(Number(e.target.value))}
+            disabled={loading}
+          >
+            {PAGE_SIZE_OPTIONS.map((size) => (
+              <option key={size} value={size}>
+                {size}
+              </option>
+            ))}
+          </select>
+          <span>第 {pageNumber(offset, pageSize)} 页</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="rounded-md border border-[#E6E8F0] bg-white px-3 py-1 text-sm text-[#374151] disabled:cursor-not-allowed disabled:text-[#9CA3AF]"
+            onClick={() => setOffset((v) => Math.max(0, v - pageSize))}
+            disabled={loading || offset === 0}
+          >
+            上一页
+          </button>
+          <button
+            type="button"
+            className="rounded-md border border-[#E6E8F0] bg-white px-3 py-1 text-sm text-[#374151] disabled:cursor-not-allowed disabled:text-[#9CA3AF]"
+            onClick={() => setOffset((v) => v + pageSize)}
+            disabled={loading || !hasNext}
+          >
+            下一页
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -970,12 +1421,137 @@ function TextInput(props: { value: string; onChange: (v: string) => void; placeh
   );
 }
 
-function TextArea(props: { value: string; onChange: (v: string) => void; rows?: number }) {
+function SearchableProjectSelect(props: {
+  projects: Project[];
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+
+  const selectedProject = props.projects.find((p) => p.id === props.value) ?? null;
+
+  const filteredProjects = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return props.projects;
+    return props.projects.filter((p) => p.name.toLowerCase().includes(q));
+  }, [props.projects, query]);
+
+  const options = useMemo(() => {
+    return [{ id: "", name: "不选择项目" }, ...filteredProjects];
+  }, [filteredProjects]);
+
+  useEffect(() => {
+    if (!open) setQuery("");
+  }, [open]);
+
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [query, open]);
+
+  function renderHighlightedName(name: string) {
+    const q = query.trim();
+    if (!q) return name;
+    const index = name.toLowerCase().indexOf(q.toLowerCase());
+    if (index < 0) return name;
+    return (
+      <>
+        {name.slice(0, index)}
+        <span className="bg-[#FEF3C7] text-[#92400E]">{name.slice(index, index + q.length)}</span>
+        {name.slice(index + q.length)}
+      </>
+    );
+  }
+
+  function selectOption(index: number) {
+    const option = options[index];
+    if (!option) return;
+    props.onChange(option.id);
+    setOpen(false);
+  }
+
+  return (
+    <div className="relative grid gap-2">
+      <input
+        className="w-full rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm text-[#111827] outline-none focus:ring-2 focus:ring-[#4F46E5]"
+        value={open ? query : selectedProject?.name ?? ""}
+        placeholder="搜索项目..."
+        onFocus={() => setOpen(true)}
+        onBlur={() => {
+          window.setTimeout(() => setOpen(false), 100);
+        }}
+        onChange={(e) => {
+          setOpen(true);
+          setQuery(e.target.value);
+        }}
+        onKeyDown={(e) => {
+          if (!open && (e.key === "ArrowDown" || e.key === "Enter")) {
+            setOpen(true);
+            return;
+          }
+          if (!open) return;
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setActiveIndex((v) => Math.min(options.length - 1, v + 1));
+            return;
+          }
+          if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setActiveIndex((v) => Math.max(0, v - 1));
+            return;
+          }
+          if (e.key === "Enter") {
+            e.preventDefault();
+            selectOption(activeIndex);
+            return;
+          }
+          if (e.key === "Escape") {
+            e.preventDefault();
+            setOpen(false);
+          }
+        }}
+      />
+      {open ? (
+        <div className="max-h-56 overflow-auto rounded-md border border-[#E6E8F0] bg-white shadow-sm">
+          {options.length === 1 && filteredProjects.length === 0 ? (
+            <div className="px-3 py-2 text-sm text-[#6B7280]">没有匹配的项目</div>
+          ) : (
+            options.map((option, index) => (
+              <button
+                key={option.id || "none"}
+                type="button"
+                className={classNames(
+                  "block w-full px-3 py-2 text-left text-sm hover:bg-[#F5F6FA]",
+                  props.value === option.id && "text-[#4F46E5]",
+                  activeIndex === index && "bg-[#EEF2FF]",
+                )}
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setActiveIndex(index)}
+                onClick={() => selectOption(index)}
+              >
+                {renderHighlightedName(option.name)}
+              </button>
+            ))
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function TextArea(props: {
+  value: string;
+  onChange: (v: string) => void;
+  rows?: number;
+  placeholder?: string;
+}) {
   return (
     <textarea
-      className="w-full resize-y rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm text-[#111827] outline-none focus:ring-2 focus:ring-[#4F46E5]"
+      className="w-full resize-y rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm text-[#111827] outline-none placeholder:text-[#9CA3AF] focus:ring-2 focus:ring-[#4F46E5]"
       value={props.value}
       rows={props.rows ?? 3}
+      placeholder={props.placeholder}
       onChange={(e) => props.onChange(e.target.value)}
     />
   );
@@ -1066,19 +1642,12 @@ function TaskDrawerForm(props: {
       <Field label="任务名称">
         <TextInput value={t.name} onChange={(v) => props.onChange({ ...t, name: v })} />
       </Field>
-      <Field label="所属项目">
-        <select
-          className="w-full rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm"
-          value={t.projectId}
-          onChange={(e) => props.onChange({ ...t, projectId: e.target.value })}
-        >
-          <option value="">请选择</option>
-          {props.projects.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
+      <Field label={props.mode === "create" ? "所属项目（可选）" : "所属项目"}>
+        <SearchableProjectSelect
+          projects={props.projects}
+          value={t.projectId ?? ""}
+          onChange={(value) => props.onChange({ ...t, projectId: value })}
+        />
       </Field>
 
       <div className="grid grid-cols-2 gap-3">
@@ -1119,15 +1688,25 @@ function TaskDrawerForm(props: {
         />
       </Field>
 
-      <Field label="任务描述">
-        <TextArea value={t.description} onChange={(v) => props.onChange({ ...t, description: v })} rows={3} />
+      <Field label="任务描述（可选）">
+        <TextArea
+          value={t.description}
+          onChange={(v) => props.onChange({ ...t, description: v })}
+          rows={3}
+          placeholder="可选"
+        />
       </Field>
 
       <Field label="情境分类">
         <TextInput value={t.context} onChange={(v) => props.onChange({ ...t, context: v })} />
       </Field>
-      <Field label="详细信息">
-        <TextArea value={t.details} onChange={(v) => props.onChange({ ...t, details: v })} rows={6} />
+      <Field label="详细信息（可选）">
+        <TextArea
+          value={t.details}
+          onChange={(v) => props.onChange({ ...t, details: v })}
+          rows={6}
+          placeholder="可选"
+        />
       </Field>
 
       {props.mode === "edit" ? (

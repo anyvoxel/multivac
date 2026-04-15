@@ -30,44 +30,44 @@ func parseTaskSortBy(v string) (domain.SortBy, bool) {
 	}
 }
 
-func parsePagination(ctx *app.RequestContext) (limit, offset int, ok bool) {
+func parsePagination(ctx *app.RequestContext) (limit, offset int, err error) {
 	limitStr := ctx.Query("limit")
 	if limitStr != "" {
-		n, err := strconv.Atoi(limitStr)
-		if err != nil || n < 0 {
-			return 0, 0, false
+		n, convErr := strconv.Atoi(limitStr)
+		if convErr != nil || n < 0 {
+			return 0, 0, domain.InvalidPaginationValue("limit", limitStr)
 		}
 		limit = n
 	}
 	offsetStr := ctx.Query("offset")
 	if offsetStr != "" {
-		n, err := strconv.Atoi(offsetStr)
-		if err != nil || n < 0 {
-			return 0, 0, false
+		n, convErr := strconv.Atoi(offsetStr)
+		if convErr != nil || n < 0 {
+			return 0, 0, domain.InvalidPaginationValue("offset", offsetStr)
 		}
 		offset = n
 	}
-	return limit, offset, true
+	return limit, offset, nil
 }
 
-func parseTaskSort(ctx *app.RequestContext) ([]domain.Sort, bool) {
+func parseTaskSort(ctx *app.RequestContext) ([]domain.Sort, error) {
 	sortByStr := ctx.Query("sortBy")
 	if sortByStr == "" {
-		return nil, true
+		return nil, nil
 	}
 	by, ok := parseTaskSortBy(sortByStr)
 	if !ok {
-		return nil, false
+		return nil, domain.InvalidSortBy(sortByStr)
 	}
 	dir := domain.SortDesc
 	if sortDirStr := ctx.Query("sortDir"); sortDirStr != "" {
 		d, ok := domain.ParseSortDir(sortDirStr)
 		if !ok {
-			return nil, false
+			return nil, domain.InvalidSortDir(sortDirStr)
 		}
 		dir = d
 	}
-	return []domain.Sort{{By: by, Dir: dir}}, true
+	return []domain.Sort{{By: by, Dir: dir}}, nil
 }
 
 // Handler exposes Task application service over HTTP.
@@ -81,7 +81,7 @@ func NewHandler(svc *application.Service) *Handler {
 }
 
 type createTaskReq struct {
-	ProjectID    string  `json:"projectId"`
+	ProjectID    *string `json:"projectId,omitempty"`
 	Name         string  `json:"name"`
 	Description  string  `json:"description"`
 	Context      string  `json:"context"`
@@ -92,6 +92,7 @@ type createTaskReq struct {
 }
 
 type updateTaskReq struct {
+	ProjectID    *string `json:"projectId,omitempty"`
 	Name         string  `json:"name"`
 	Description  string  `json:"description"`
 	Context      string  `json:"context"`
@@ -168,22 +169,22 @@ func (h *Handler) List(c context.Context, ctx *app.RequestContext) {
 	if statusStr != "" {
 		s, ok := domain.ParseStatus(statusStr)
 		if !ok {
-			ctx.JSON(stdhttp.StatusBadRequest, map[string]any{"error": "invalid status"})
+			writeErr(ctx, domain.InvalidStatus(statusStr))
 			return
 		}
 		status = &s
 	}
 
-	q := domain.ListQuery{ProjectID: projectID, Status: status}
-	if sorts, ok := parseTaskSort(ctx); ok {
-		q.Sorts = sorts
-	} else {
-		ctx.JSON(stdhttp.StatusBadRequest, map[string]any{"error": "invalid sort"})
+	q := domain.ListQuery{ProjectID: projectID, Status: status, Search: strings.TrimSpace(ctx.Query("search"))}
+	sorts, err := parseTaskSort(ctx)
+	if err != nil {
+		writeErr(ctx, err)
 		return
 	}
-	limit, offset, ok := parsePagination(ctx)
-	if !ok {
-		ctx.JSON(stdhttp.StatusBadRequest, map[string]any{"error": "invalid pagination"})
+	q.Sorts = sorts
+	limit, offset, err := parsePagination(ctx)
+	if err != nil {
+		writeErr(ctx, err)
 		return
 	}
 	q.Limit, q.Offset = limit, offset
@@ -209,7 +210,7 @@ func (h *Handler) Create(c context.Context, ctx *app.RequestContext) {
 	}
 	prio, ok := domain.ParsePriority(req.Priority)
 	if !ok {
-		ctx.JSON(stdhttp.StatusBadRequest, map[string]any{"error": "invalid priority"})
+		writeErr(ctx, domain.InvalidPriority(req.Priority))
 		return
 	}
 	dueAt, err := parseDueAt(req.DueAtRFC3339)
@@ -218,8 +219,13 @@ func (h *Handler) Create(c context.Context, ctx *app.RequestContext) {
 		return
 	}
 
+	projectID := ""
+	if req.ProjectID != nil {
+		projectID = strings.TrimSpace(*req.ProjectID)
+	}
+
 	t, err := h.svc.Create(c, application.CreateTaskCmd{
-		ProjectID:   req.ProjectID,
+		ProjectID:   projectID,
 		Name:        req.Name,
 		Description: req.Description,
 		Context:     req.Context,
@@ -234,7 +240,7 @@ func (h *Handler) Create(c context.Context, ctx *app.RequestContext) {
 	if req.Status != "" {
 		st, ok := domain.ParseStatus(req.Status)
 		if !ok {
-			ctx.JSON(stdhttp.StatusBadRequest, map[string]any{"error": "invalid status"})
+			writeErr(ctx, domain.InvalidStatus(req.Status))
 			return
 		}
 		t, err = h.svc.SetStatus(c, t.ID, st)
@@ -265,12 +271,27 @@ func (h *Handler) ListByProject(c context.Context, ctx *app.RequestContext) {
 	if statusStr != "" {
 		s, ok := domain.ParseStatus(statusStr)
 		if !ok {
-			ctx.JSON(stdhttp.StatusBadRequest, map[string]any{"error": "invalid status"})
+			writeErr(ctx, domain.InvalidStatus(statusStr))
 			return
 		}
 		status = &s
 	}
-	items, err := h.svc.List(c, domain.ListQuery{ProjectID: pid, Status: status})
+
+	q := domain.ListQuery{ProjectID: pid, Status: status, Search: strings.TrimSpace(ctx.Query("search"))}
+	sorts, err := parseTaskSort(ctx)
+	if err != nil {
+		writeErr(ctx, err)
+		return
+	}
+	q.Sorts = sorts
+	limit, offset, err := parsePagination(ctx)
+	if err != nil {
+		writeErr(ctx, err)
+		return
+	}
+	q.Limit, q.Offset = limit, offset
+
+	items, err := h.svc.List(c, q)
 	if err != nil {
 		writeErr(ctx, err)
 		return
@@ -292,7 +313,7 @@ func (h *Handler) Update(c context.Context, ctx *app.RequestContext) {
 	}
 	prio, ok := domain.ParsePriority(req.Priority)
 	if !ok {
-		ctx.JSON(stdhttp.StatusBadRequest, map[string]any{"error": "invalid priority"})
+		writeErr(ctx, domain.InvalidPriority(req.Priority))
 		return
 	}
 	dueAt, err := parseDueAt(req.DueAtRFC3339)
@@ -301,7 +322,13 @@ func (h *Handler) Update(c context.Context, ctx *app.RequestContext) {
 		return
 	}
 
+	projectID := ""
+	if req.ProjectID != nil {
+		projectID = strings.TrimSpace(*req.ProjectID)
+	}
+
 	t, err := h.svc.Update(c, id, application.UpdateTaskCmd{
+		ProjectID:   projectID,
 		Name:        req.Name,
 		Description: req.Description,
 		Context:     req.Context,
@@ -326,7 +353,7 @@ func (h *Handler) SetStatus(c context.Context, ctx *app.RequestContext) {
 	}
 	st, ok := domain.ParseStatus(req.Status)
 	if !ok {
-		ctx.JSON(stdhttp.StatusBadRequest, map[string]any{"error": "invalid status"})
+		writeErr(ctx, domain.InvalidStatus(req.Status))
 		return
 	}
 	t, err := h.svc.SetStatus(c, id, st)

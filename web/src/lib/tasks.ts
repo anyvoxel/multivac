@@ -1,9 +1,11 @@
 export type TaskStatus = "Todo" | "InProgress" | "Done" | "Canceled";
 export type TaskPriority = "Low" | "Medium" | "High" | "P0";
+export type TaskSortBy = "DueAt";
+export type SortDir = "Asc" | "Desc";
 
 export type Task = {
   id: string;
-  projectId: string;
+  projectId?: string;
   name: string;
   description: string;
   context: string;
@@ -16,7 +18,7 @@ export type Task = {
 };
 
 export type CreateTaskInput = {
-  projectId: string;
+  projectId?: string;
   name: string;
   description: string;
   context: string;
@@ -27,11 +29,24 @@ export type CreateTaskInput = {
   status?: TaskStatus;
 };
 
-export type UpdateTaskInput = Omit<CreateTaskInput, "projectId">;
+export type UpdateTaskInput = {
+  projectId?: string;
+  name: string;
+  description: string;
+  context: string;
+  details: string;
+  priority: TaskPriority;
+  dueAt?: string;
+};
 
 export type ListTasksQuery = {
   projectId?: string;
   status?: TaskStatus;
+  search?: string;
+  sortBy?: TaskSortBy;
+  sortDir?: SortDir;
+  limit?: number;
+  offset?: number;
 };
 
 function apiBase(): string {
@@ -72,6 +87,11 @@ export async function listTasksByProject(
 ): Promise<Task[]> {
   const sp = new URLSearchParams();
   if (q?.status) sp.set("status", q.status);
+  if (q?.search) sp.set("search", q.search);
+  if (q?.sortBy) sp.set("sortBy", q.sortBy);
+  if (q?.sortDir) sp.set("sortDir", q.sortDir);
+  if (q?.limit !== undefined) sp.set("limit", String(q.limit));
+  if (q?.offset !== undefined) sp.set("offset", String(q.offset));
   const qs = sp.toString();
   return request<Task[]>(
     `/api/v1/projects/${encodeURIComponent(projectId)}/tasks${qs ? `?${qs}` : ""}`,
@@ -82,6 +102,11 @@ export async function listTasks(q?: ListTasksQuery): Promise<Task[]> {
   const sp = new URLSearchParams();
   if (q?.projectId) sp.set("projectId", q.projectId);
   if (q?.status) sp.set("status", q.status);
+  if (q?.search) sp.set("search", q.search);
+  if (q?.sortBy) sp.set("sortBy", q.sortBy);
+  if (q?.sortDir) sp.set("sortDir", q.sortDir);
+  if (q?.limit !== undefined) sp.set("limit", String(q.limit));
+  if (q?.offset !== undefined) sp.set("offset", String(q.offset));
   const qs = sp.toString();
   return request<Task[]>(`/api/v1/tasks${qs ? `?${qs}` : ""}`);
 }
@@ -92,13 +117,13 @@ export async function getTask(id: string): Promise<Task> {
 
 export async function createTask(input: CreateTaskInput): Promise<Task> {
   const body: Record<string, unknown> = {
-    projectId: input.projectId,
     name: input.name,
     description: input.description,
     context: input.context,
     details: input.details,
     priority: input.priority,
   };
+  if (input.projectId !== undefined) body.projectId = input.projectId;
   if (input.dueAt !== undefined) body.dueAt = input.dueAt;
   if (input.status) body.status = input.status;
 
@@ -119,6 +144,7 @@ export async function updateTask(
     details: input.details,
     priority: input.priority,
   };
+  if (input.projectId !== undefined) body.projectId = input.projectId;
   if (input.dueAt !== undefined) body.dueAt = input.dueAt;
 
   return request<Task>(`/api/v1/tasks/${encodeURIComponent(id)}`, {

@@ -15,9 +15,15 @@ import (
 )
 
 func applyProjectFilters(base string, q domain.ListQuery, args []any) (string, []any) {
+	base += " WHERE 1=1"
 	if q.Status != nil {
-		base += " WHERE status = ?"
+		base += " AND status = ?"
 		args = append(args, string(*q.Status))
+	}
+	if q.Search != "" {
+		like := "%" + strings.ToLower(q.Search) + "%"
+		base += " AND (LOWER(name) LIKE ? OR LOWER(goal) LIKE ? OR LOWER(principles) LIKE ? OR LOWER(vision_result) LIKE ? OR LOWER(description) LIKE ?)"
+		args = append(args, like, like, like, like, like)
 	}
 	return base, args
 }
@@ -32,7 +38,7 @@ func projectOrderBy(q domain.ListQuery) (string, error) {
 	for _, s := range q.Sorts {
 		col, ok := orderByMap[s.By]
 		if !ok {
-			return "", domain.ErrInvalidArg
+			return "", domain.InvalidSortBy(string(s.By))
 		}
 		dir := "ASC"
 		if s.Dir == domain.SortDesc {

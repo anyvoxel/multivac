@@ -30,3 +30,33 @@ func TestProjectLifecycle(t *testing.T) {
 	g.Expect(p.CompletedAt).ToNot(gomega.BeNil())
 	g.Expect(*p.CompletedAt).To(gomega.Equal(now3))
 }
+
+func TestNewProjectValidationErrorIncludesMissingFields(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	_, err := NewProject("id", "", "", "principles", "", "", time.Now())
+	g.Expect(err).To(gomega.MatchError("invalid argument: [name: Required value, goal: Required value, visionResult: Required value, description: Required value]"))
+	g.Expect(err).To(gomega.MatchError(gomega.HavePrefix("invalid argument:")))
+	g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("name: Required value")))
+	g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("goal: Required value")))
+}
+
+func TestProjectUpdateValidationErrorIncludesMissingFields(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	p, err := NewProject("id", "name", "goal", "principles", "vision", "desc", time.Now())
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	err = p.UpdateDetails("", "goal", "", "vision", "", time.Now())
+	g.Expect(err).To(gomega.MatchError("invalid argument: [name: Required value, principles: Required value, description: Required value]"))
+}
+
+func TestProjectSetStatusValidationErrorIncludesField(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	p, err := NewProject("id", "name", "goal", "principles", "vision", "desc", time.Now())
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	err = p.SetStatus(Status("wat"), time.Now())
+	g.Expect(err).To(gomega.MatchError("invalid argument: [status: Unsupported value: \"wat\"]"))
+}

@@ -43,15 +43,12 @@ type Sort struct {
 	Dir SortDir
 }
 
-func (s Sort) valid() bool {
-	return s.By.valid() && s.Dir.valid()
-}
-
 // ListQuery is used to query projects.
 //
 // NOTE: Add new filter fields here without changing repository method signatures.
 type ListQuery struct {
 	Status *Status
+	Search string
 	Sorts  []Sort
 	Limit  int
 	Offset int
@@ -79,8 +76,11 @@ func (q *ListQuery) Validate() error {
 		return ErrInvalidArg
 	}
 	for _, s := range q.Sorts {
-		if !s.valid() {
-			return ErrInvalidArg
+		if !s.By.valid() {
+			return invalidFieldValueError("sortBy", string(s.By))
+		}
+		if !s.Dir.valid() {
+			return invalidFieldValueError("sortDir", string(s.Dir))
 		}
 	}
 	return nil

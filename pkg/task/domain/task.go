@@ -26,17 +26,15 @@ func NewTask(
 	dueAt *time.Time,
 	now time.Time,
 ) (*Task, error) {
-	if id == "" || projectID == "" || name == "" {
-		return nil, ErrInvalidArg
-	}
-	if description == "" || details == "" {
-		return nil, ErrInvalidArg
-	}
-	if contextCategory == "" {
-		return nil, ErrInvalidArg
+	if err := requiredFieldsError(
+		requiredField(id, "id"),
+		requiredField(name, "name"),
+		requiredField(contextCategory, "context"),
+	); err != nil {
+		return nil, err
 	}
 	if !priority.Valid() {
-		return nil, ErrInvalidArg
+		return nil, invalidFieldValueError("priority", string(priority))
 	}
 
 	return &Task{
@@ -56,7 +54,7 @@ func NewTask(
 
 // UpdateDetails replaces editable fields.
 func (t *Task) UpdateDetails(
-	name, description, contextCategory, details string,
+	projectID, name, description, contextCategory, details string,
 	priority Priority,
 	dueAt *time.Time,
 	now time.Time,
@@ -64,16 +62,20 @@ func (t *Task) UpdateDetails(
 	if t == nil {
 		return ErrInvalidArg
 	}
-	if name == "" || description == "" || contextCategory == "" || details == "" {
-		return ErrInvalidArg
+	if err := requiredFieldsError(
+		requiredField(name, "name"),
+		requiredField(contextCategory, "context"),
+	); err != nil {
+		return err
 	}
 	if !priority.Valid() {
-		return ErrInvalidArg
+		return invalidFieldValueError("priority", string(priority))
 	}
 	if dueAt != nil && dueAt.IsZero() {
 		return ErrInvalidArg
 	}
 
+	t.ProjectID = projectID
 	t.Name = name
 	t.Description = description
 	t.Context = contextCategory
@@ -90,9 +92,16 @@ func (t *Task) SetStatus(status Status, now time.Time) error {
 		return ErrInvalidArg
 	}
 	if !status.Valid() {
-		return ErrInvalidArg
+		return invalidFieldValueError("status", string(status))
 	}
 	t.Status = status
 	t.UpdatedAt = now
 	return nil
+}
+
+func requiredField(value, field string) string {
+	if value == "" {
+		return field
+	}
+	return ""
 }

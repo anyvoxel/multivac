@@ -22,20 +22,15 @@ type Project struct {
 
 // NewProject creates a Project in draft status.
 func NewProject(id, name, goal, principles, visionResult, description string, now time.Time) (*Project, error) {
-	if id == "" || name == "" {
-		return nil, ErrInvalidArg
-	}
-	if goal == "" {
-		return nil, ErrInvalidArg
-	}
-	if principles == "" {
-		return nil, ErrInvalidArg
-	}
-	if visionResult == "" {
-		return nil, ErrInvalidArg
-	}
-	if description == "" {
-		return nil, ErrInvalidArg
+	if err := requiredFieldsError(
+		requiredField(id, "id"),
+		requiredField(name, "name"),
+		requiredField(goal, "goal"),
+		requiredField(principles, "principles"),
+		requiredField(visionResult, "visionResult"),
+		requiredField(description, "description"),
+	); err != nil {
+		return nil, err
 	}
 
 	return &Project{
@@ -56,8 +51,14 @@ func (p *Project) UpdateDetails(name, goal, principles, visionResult, descriptio
 	if p == nil {
 		return ErrInvalidArg
 	}
-	if name == "" || goal == "" || principles == "" || visionResult == "" || description == "" {
-		return ErrInvalidArg
+	if err := requiredFieldsError(
+		requiredField(name, "name"),
+		requiredField(goal, "goal"),
+		requiredField(principles, "principles"),
+		requiredField(visionResult, "visionResult"),
+		requiredField(description, "description"),
+	); err != nil {
+		return err
 	}
 	p.Name = name
 	p.Goal = goal
@@ -74,7 +75,7 @@ func (p *Project) SetStatus(status Status, now time.Time) error {
 		return ErrInvalidArg
 	}
 	if !status.Valid() {
-		return ErrInvalidArg
+		return invalidFieldValueError("status", string(status))
 	}
 	// Minimal domain rules: manage timestamps based on status.
 	if status == StatusActive {
@@ -95,4 +96,11 @@ func (p *Project) SetStatus(status Status, now time.Time) error {
 
 func ptrTime(t time.Time) *time.Time {
 	return &t
+}
+
+func requiredField(value, field string) string {
+	if value == "" {
+		return field
+	}
+	return ""
 }

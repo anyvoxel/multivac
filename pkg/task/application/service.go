@@ -47,6 +47,7 @@ type CreateTaskCmd struct {
 
 // UpdateTaskCmd describes input for updating a task.
 type UpdateTaskCmd struct {
+	ProjectID   string
 	Name        string
 	Description string
 	Context     string
@@ -109,6 +110,7 @@ func (s *Service) Update(ctx context.Context, id string, cmd UpdateTaskCmd) (*do
 		return nil, err
 	}
 	if err := t.UpdateDetails(
+		cmd.ProjectID,
 		cmd.Name,
 		cmd.Description,
 		cmd.Context,

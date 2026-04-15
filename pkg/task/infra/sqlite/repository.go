@@ -23,22 +23,36 @@ func applyTaskFilters(base string, q domain.ListQuery, args []any) (string, []an
 		base += " AND status = ?"
 		args = append(args, string(*q.Status))
 	}
+	if q.Search != "" {
+		like := "%" + strings.ToLower(q.Search) + "%"
+		base += " AND (LOWER(name) LIKE ? OR LOWER(description) LIKE ? OR LOWER(context) LIKE ? OR LOWER(details) LIKE ?)"
+		args = append(args, like, like, like, like)
+	}
 	return base, args
 }
 
 func taskOrderBy(q domain.ListQuery) (string, error) {
 	priorityOrder := "CASE priority WHEN 'P0' THEN 0 WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 3 ELSE 99 END"
+	dueAtAscOrder := "CASE WHEN due_at IS NULL THEN 1 ELSE 0 END ASC, due_at ASC"
+	dueAtDescOrder := "CASE WHEN due_at IS NULL THEN 1 ELSE 0 END ASC, due_at DESC"
 	orderByMap := map[domain.SortBy]string{
 		domain.TaskSortByCreatedAt: "created_at",
 		domain.TaskSortByUpdatedAt: "updated_at",
-		domain.TaskSortByDueAt:     "due_at",
 		domain.TaskSortByPriority:  priorityOrder,
 	}
 	orderParts := make([]string, 0, len(q.Sorts))
 	for _, s := range q.Sorts {
+		if s.By == domain.TaskSortByDueAt {
+			if s.Dir == domain.SortDesc {
+				orderParts = append(orderParts, dueAtDescOrder)
+			} else {
+				orderParts = append(orderParts, dueAtAscOrder)
+			}
+			continue
+		}
 		expr, ok := orderByMap[s.By]
 		if !ok {
-			return "", domain.ErrInvalidArg
+			return "", domain.InvalidSortBy(string(s.By))
 		}
 		dir := "ASC"
 		if s.Dir == domain.SortDesc {
@@ -78,7 +92,7 @@ PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
-  project_id TEXT NOT NULL,
+  project_id TEXT NULL,
   name TEXT NOT NULL,
   description TEXT NOT NULL,
   context TEXT NOT NULL,
@@ -94,22 +108,62 @@ CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(project_id, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_project_priority ON tasks(project_id, priority);
 `
-	_, err := r.db.ExecContext(ctx, ddl)
+	if _, err := r.db.ExecContext(ctx, ddl); err != nil {
+		return err
+	}
+
+	var notNull int
+	if err := r.db.GetContext(ctx, &notNull, `SELECT "notnull" FROM pragma_table_info('tasks') WHERE name = 'project_id';`); err != nil {
+		return err
+	}
+	if notNull == 0 {
+		return nil
+	}
+
+	const migrateNullableProjectID = `
+PRAGMA foreign_keys = OFF;
+BEGIN TRANSACTION;
+CREATE TABLE tasks_new (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NULL,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL,
+  context TEXT NOT NULL,
+  details TEXT NOT NULL,
+  status TEXT NOT NULL,
+  priority TEXT NOT NULL,
+  due_at DATETIME NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+INSERT INTO tasks_new (id, project_id, name, description, context, details, status, priority, due_at, created_at, updated_at)
+SELECT id, NULLIF(project_id, ''), name, description, context, details, status, priority, due_at, created_at, updated_at
+FROM tasks;
+DROP TABLE tasks;
+ALTER TABLE tasks_new RENAME TO tasks;
+CREATE INDEX idx_tasks_project_id ON tasks(project_id);
+CREATE INDEX idx_tasks_project_status ON tasks(project_id, status);
+CREATE INDEX idx_tasks_project_priority ON tasks(project_id, priority);
+COMMIT;
+PRAGMA foreign_keys = ON;
+`
+	_, err := r.db.ExecContext(ctx, migrateNullableProjectID)
 	return err
 }
 
 type taskRow struct {
-	ID          string       `db:"id"`
-	ProjectID   string       `db:"project_id"`
-	Name        string       `db:"name"`
-	Description string       `db:"description"`
-	Context     string       `db:"context"`
-	Details     string       `db:"details"`
-	Status      string       `db:"status"`
-	Priority    string       `db:"priority"`
-	DueAt       sql.NullTime `db:"due_at"`
-	CreatedAt   sql.NullTime `db:"created_at"`
-	UpdatedAt   sql.NullTime `db:"updated_at"`
+	ID          string         `db:"id"`
+	ProjectID   sql.NullString `db:"project_id"`
+	Name        string         `db:"name"`
+	Description string         `db:"description"`
+	Context     string         `db:"context"`
+	Details     string         `db:"details"`
+	Status      string         `db:"status"`
+	Priority    string         `db:"priority"`
+	DueAt       sql.NullTime   `db:"due_at"`
+	CreatedAt   sql.NullTime   `db:"created_at"`
+	UpdatedAt   sql.NullTime   `db:"updated_at"`
 }
 
 func toDomain(row taskRow) (*domain.Task, error) {
@@ -124,7 +178,7 @@ func toDomain(row taskRow) (*domain.Task, error) {
 
 	t := &domain.Task{
 		ID:          row.ID,
-		ProjectID:   row.ProjectID,
+		ProjectID:   row.ProjectID.String,
 		Name:        row.Name,
 		Description: row.Description,
 		Context:     row.Context,
@@ -156,9 +210,13 @@ INSERT INTO tasks (
   :due_at, :created_at, :updated_at
 );
 `
+	var projectID any
+	if t.ProjectID != "" {
+		projectID = t.ProjectID
+	}
 	params := map[string]any{
 		"id":          t.ID,
-		"project_id":  t.ProjectID,
+		"project_id":  projectID,
 		"name":        t.Name,
 		"description": t.Description,
 		"context":     t.Context,
@@ -231,6 +289,7 @@ WHERE 1=1
 func (r *Repository) Update(ctx context.Context, t *domain.Task) error {
 	const q = `
 UPDATE tasks SET
+  project_id = :project_id,
   name = :name,
   description = :description,
   context = :context,
@@ -241,8 +300,13 @@ UPDATE tasks SET
   updated_at = :updated_at
 WHERE id = :id;
 `
+	var projectID any
+	if t.ProjectID != "" {
+		projectID = t.ProjectID
+	}
 	params := map[string]any{
 		"id":          t.ID,
+		"project_id":  projectID,
 		"name":        t.Name,
 		"description": t.Description,
 		"context":     t.Context,

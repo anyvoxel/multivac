@@ -28,44 +28,44 @@ func parseProjectSortBy(v string) (domain.SortBy, bool) {
 	}
 }
 
-func parsePagination(ctx *app.RequestContext) (limit, offset int, ok bool) {
+func parsePagination(ctx *app.RequestContext) (limit, offset int, err error) {
 	limitStr := ctx.Query("limit")
 	if limitStr != "" {
-		n, err := strconv.Atoi(limitStr)
-		if err != nil || n < 0 {
-			return 0, 0, false
+		n, convErr := strconv.Atoi(limitStr)
+		if convErr != nil || n < 0 {
+			return 0, 0, domain.InvalidPaginationValue("limit", limitStr)
 		}
 		limit = n
 	}
 	offsetStr := ctx.Query("offset")
 	if offsetStr != "" {
-		n, err := strconv.Atoi(offsetStr)
-		if err != nil || n < 0 {
-			return 0, 0, false
+		n, convErr := strconv.Atoi(offsetStr)
+		if convErr != nil || n < 0 {
+			return 0, 0, domain.InvalidPaginationValue("offset", offsetStr)
 		}
 		offset = n
 	}
-	return limit, offset, true
+	return limit, offset, nil
 }
 
-func parseProjectSort(ctx *app.RequestContext) ([]domain.Sort, bool) {
+func parseProjectSort(ctx *app.RequestContext) ([]domain.Sort, error) {
 	sortByStr := ctx.Query("sortBy")
 	if sortByStr == "" {
-		return nil, true
+		return nil, nil
 	}
 	by, ok := parseProjectSortBy(sortByStr)
 	if !ok {
-		return nil, false
+		return nil, domain.InvalidSortBy(sortByStr)
 	}
 	dir := domain.SortDesc
 	if sortDirStr := ctx.Query("sortDir"); sortDirStr != "" {
 		d, ok := domain.ParseSortDir(sortDirStr)
 		if !ok {
-			return nil, false
+			return nil, domain.InvalidSortDir(sortDirStr)
 		}
 		dir = d
 	}
-	return []domain.Sort{{By: by, Dir: dir}}, true
+	return []domain.Sort{{By: by, Dir: dir}}, nil
 }
 
 // Handler exposes Project application service over HTTP.
@@ -179,22 +179,22 @@ func (h *Handler) List(c context.Context, ctx *app.RequestContext) {
 	if statusStr != "" {
 		s, ok := domain.ParseStatus(statusStr)
 		if !ok {
-			ctx.JSON(stdhttp.StatusBadRequest, map[string]any{"error": "invalid status"})
+			writeErr(ctx, domain.InvalidStatus(statusStr))
 			return
 		}
 		status = &s
 	}
 
-	q := domain.ListQuery{Status: status}
-	if sorts, ok := parseProjectSort(ctx); ok {
-		q.Sorts = sorts
-	} else {
-		ctx.JSON(stdhttp.StatusBadRequest, map[string]any{"error": "invalid sort"})
+	q := domain.ListQuery{Status: status, Search: strings.TrimSpace(ctx.Query("search"))}
+	sorts, err := parseProjectSort(ctx)
+	if err != nil {
+		writeErr(ctx, err)
 		return
 	}
-	limit, offset, ok := parsePagination(ctx)
-	if !ok {
-		ctx.JSON(stdhttp.StatusBadRequest, map[string]any{"error": "invalid pagination"})
+	q.Sorts = sorts
+	limit, offset, err := parsePagination(ctx)
+	if err != nil {
+		writeErr(ctx, err)
 		return
 	}
 	q.Limit, q.Offset = limit, offset
@@ -243,7 +243,7 @@ func (h *Handler) SetStatus(c context.Context, ctx *app.RequestContext) {
 	}
 	st, ok := domain.ParseStatus(req.Status)
 	if !ok {
-		ctx.JSON(stdhttp.StatusBadRequest, map[string]any{"error": "invalid status"})
+		writeErr(ctx, domain.InvalidStatus(req.Status))
 		return
 	}
 	p, err := h.svc.SetStatus(c, id, st)

@@ -26,6 +26,9 @@ export type UpdateProjectInput = CreateProjectInput;
 
 export type ListProjectsQuery = {
   status?: ProjectStatus;
+  search?: string;
+  limit?: number;
+  offset?: number;
 };
 
 function apiBase(): string {
@@ -61,6 +64,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export async function listProjects(q?: ListProjectsQuery): Promise<Project[]> {
   const sp = new URLSearchParams();
   if (q?.status) sp.set("status", q.status);
+  if (q?.search) sp.set("search", q.search);
+  if (q?.limit !== undefined) sp.set("limit", String(q.limit));
+  if (q?.offset !== undefined) sp.set("offset", String(q.offset));
   const qs = sp.toString();
   return request<Project[]>(`/api/v1/projects${qs ? `?${qs}` : ""}`);
 }
