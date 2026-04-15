@@ -44,15 +44,23 @@ import {
 } from "./lib/waitingLists";
 import type { WaitingList } from "./lib/waitingLists";
 import {
+  addDays,
   formatDate,
   formatDateTime,
+  formatMonthDay,
+  formatWeekRange,
+  formatWeekdayShort,
   fromDateTimeLocalValue,
   fromDateValue,
+  getWeekDays,
+  isSameLocalDay,
+  startOfLocalDay,
   toDateTimeLocalValue,
   toDateValue,
+  toLocalDateKey,
 } from "./lib/time";
 
-type Route = "projects" | "tasks" | "inboxes" | "somedays" | "waitingLists";
+type Route = "projects" | "tasks" | "inboxes" | "somedays" | "waitingLists" | "schedule";
 
 const PROJECT_STATUSES: ProjectStatus[] = [
   "Draft",
@@ -65,6 +73,7 @@ const TASK_PRIORITIES: TaskPriority[] = ["P0", "High", "Medium", "Low"];
 const PAGE_SIZE_OPTIONS = [10, 20, 50];
 const LAST_TASK_PROJECT_STORAGE_KEY = "multivac:last-task-project-id";
 const EMPTY_TASK_PROJECT_SENTINEL = "__NONE__";
+const SCHEDULE_WEEK_STARTS_ON = 0;
 
 function classNames(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -117,6 +126,61 @@ function taskPriorityLabel(p: TaskPriority): string {
 
 function pageNumber(offset: number, pageSize: number): number {
   return Math.floor(offset / pageSize) + 1;
+}
+
+type ScheduleEntry = {
+  id: string;
+  kind: "Task" | "WaitingFor";
+  title: string;
+  dateISO: string;
+  projectId?: string;
+  owner?: string;
+  priority?: TaskPriority;
+  taskStatus?: TaskStatus;
+  task?: Task;
+  waitingList?: WaitingList;
+};
+
+function toScheduleEntries(tasks: Task[], waitingLists: WaitingList[]): ScheduleEntry[] {
+  const taskEntries = tasks
+    .filter((task) => task.dueAt && task.status !== "Done" && task.status !== "Canceled")
+    .map(
+      (task): ScheduleEntry => ({
+        id: task.id,
+        kind: "Task",
+        title: task.name,
+        dateISO: task.dueAt!,
+        projectId: task.projectId,
+        priority: task.priority,
+        taskStatus: task.status,
+        task,
+      }),
+    );
+
+  const waitingEntries = waitingLists
+    .filter((waitingList) => waitingList.expectedAt)
+    .map(
+      (waitingList): ScheduleEntry => ({
+        id: waitingList.id,
+        kind: "WaitingFor",
+        title: waitingList.name,
+        dateISO: waitingList.expectedAt!,
+        owner: waitingList.owner,
+        waitingList,
+      }),
+    );
+
+  return [...taskEntries, ...waitingEntries].sort(
+    (a, b) => new Date(a.dateISO).getTime() - new Date(b.dateISO).getTime(),
+  );
+}
+
+function entryBadgeColor(entry: ScheduleEntry): "indigo" | "amber" {
+  return entry.kind === "Task" ? "indigo" : "amber";
+}
+
+function entryBadgeLabel(entry: ScheduleEntry): string {
+  return entry.kind === "Task" ? "任务" : "等待中";
 }
 
 function IconLogo() {
@@ -318,6 +382,20 @@ function IconClock() {
   );
 }
 
+function IconCalendar() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M7 4.75h10A2.25 2.25 0 0 1 19.25 7v10A2.25 2.25 0 0 1 17 19.25H7A2.25 2.25 0 0 1 4.75 17V7A2.25 2.25 0 0 1 7 4.75Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+      <path d="M8 3.75v3.5M16 3.75v3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M4.75 9.5h14.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function IconSort(props: { dir: SortDir | null }) {
   const activeUp = props.dir === "Asc";
   const activeDown = props.dir === "Desc";
@@ -381,6 +459,12 @@ export default function App() {
   const [waitingListOffset, setWaitingListOffset] = useState(0);
   const [waitingListPageSize, setWaitingListPageSize] = useState(PAGE_SIZE_OPTIONS[0]);
   const [waitingListHasNext, setWaitingListHasNext] = useState(false);
+
+  // Schedule page state
+  const [scheduleLoading, setScheduleLoading] = useState(false);
+  const [scheduleError, setScheduleError] = useState<string>("");
+  const [scheduleTasks, setScheduleTasks] = useState<Task[]>([]);
+  const [scheduleWaitingLists, setScheduleWaitingLists] = useState<WaitingList[]>([]);
 
   // Drawer state
   const [drawer, setDrawer] = useState<
@@ -525,6 +609,23 @@ export default function App() {
     }
   }
 
+  async function refreshSchedule() {
+    setScheduleLoading(true);
+    setScheduleError("");
+    try {
+      const [tasks, lists] = await Promise.all([
+        listTasks({ search: normalizedSearch || undefined, sortBy: "DueAt", sortDir: "Asc" }),
+        listWaitingLists({ search: normalizedSearch || undefined, sortBy: "ExpectedAt", sortDir: "Asc" }),
+      ]);
+      setScheduleTasks(tasks);
+      setScheduleWaitingLists(lists);
+    } catch (e) {
+      setScheduleError(String(e));
+    } finally {
+      setScheduleLoading(false);
+    }
+  }
+
   useEffect(() => {
     setProjectOffset(0);
   }, [projectStatusFilter, search, projectPageSize]);
@@ -564,10 +665,17 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route, waitingListOffset, waitingListPageSize, normalizedSearch]);
 
+  useEffect(() => {
+    if (route !== "schedule") return;
+    void refreshSchedule();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route, normalizedSearch]);
+
   const pageLabelMap: Record<Route, string> = {
     projects: "项目管理",
     tasks: "任务管理",
     inboxes: "收集箱管理",
+    schedule: "日程管理",
     somedays: "将来/也许管理",
     waitingLists: "等待列表管理",
   };
@@ -794,6 +902,9 @@ export default function App() {
       case "waitingLists":
         await refreshWaitingLists();
         return;
+      case "schedule":
+        await refreshSchedule();
+        return;
       case "tasks":
       default:
         await refreshProjects();
@@ -818,6 +929,15 @@ export default function App() {
               label="收集箱"
               onClick={() => {
                 setRoute("inboxes");
+                setSearch("");
+              }}
+            />
+            <NavItemLight
+              active={route === "schedule"}
+              icon={<IconCalendar />}
+              label="日程"
+              onClick={() => {
+                setRoute("schedule");
                 setSearch("");
               }}
             />
@@ -907,7 +1027,7 @@ export default function App() {
                   type="button"
                   onClick={() => {
                     if (route === "projects") void openProjectDrawer("create");
-                    else if (route === "tasks") void openTaskDrawer("create");
+                    else if (route === "tasks" || route === "schedule") void openTaskDrawer("create");
                     else if (route === "inboxes") void openInboxDrawer("create");
                     else if (route === "somedays") void openSomedayDrawer("create");
                     else void openWaitingListDrawer("create");
@@ -938,6 +1058,11 @@ export default function App() {
             {route === "waitingLists" && waitingListError ? (
               <div className="mb-4 rounded-md border border-[#FCA5A5] bg-[#FEF2F2] px-3 py-2 text-sm text-[#B91C1C]">
                 {waitingListError}
+              </div>
+            ) : null}
+            {route === "schedule" && scheduleError ? (
+              <div className="mb-4 rounded-md border border-[#FCA5A5] bg-[#FEF2F2] px-3 py-2 text-sm text-[#B91C1C]">
+                {scheduleError}
               </div>
             ) : null}
 
@@ -981,6 +1106,18 @@ export default function App() {
                 onNextPage={() => setInboxOffset((v) => v + inboxPageSize)}
                 onRefresh={() => void refreshInboxes()}
                 onOpen={(id, inbox) => void openInboxDrawer("edit", id, inbox)}
+              />
+            ) : route === "schedule" ? (
+              <SchedulePage
+                tasks={scheduleTasks}
+                waitingLists={scheduleWaitingLists}
+                projects={allProjects}
+                loading={scheduleLoading}
+                onRefresh={() => void refreshSchedule()}
+                onOpenTask={(id, task) => void openTaskDrawer("edit", id, task)}
+                onOpenWaitingList={(id, waitingList) =>
+                  void openWaitingListDrawer("edit", id, waitingList)
+                }
               />
             ) : route === "somedays" ? (
               <SomedaysPage
@@ -2086,6 +2223,207 @@ function SomedaysPage(props: {
           >
             下一页
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SchedulePage(props: {
+  tasks: Task[];
+  waitingLists: WaitingList[];
+  projects: Project[];
+  loading: boolean;
+  onRefresh: () => void;
+  onOpenTask: (id: string, task?: Task) => void;
+  onOpenWaitingList: (id: string, waitingList?: WaitingList) => void;
+}) {
+  const [weekAnchor, setWeekAnchor] = useState(() => startOfLocalDay(new Date()));
+
+  const scheduleEntries = useMemo(
+    () => toScheduleEntries(props.tasks, props.waitingLists),
+    [props.tasks, props.waitingLists],
+  );
+  const today = useMemo(() => startOfLocalDay(new Date()), []);
+  const tomorrow = useMemo(() => addDays(today, 1), [today]);
+  const weekDays = useMemo(() => getWeekDays(weekAnchor, SCHEDULE_WEEK_STARTS_ON), [weekAnchor]);
+  const weekLabel = useMemo(
+    () => formatWeekRange(weekAnchor, SCHEDULE_WEEK_STARTS_ON),
+    [weekAnchor],
+  );
+  const projectNameById = useMemo(() => {
+    return new Map(props.projects.map((project) => [project.id, project.name]));
+  }, [props.projects]);
+
+  const dueSoonToday = useMemo(
+    () => scheduleEntries.filter((entry) => isSameLocalDay(entry.dateISO, today)),
+    [scheduleEntries, today],
+  );
+  const dueSoonTomorrow = useMemo(
+    () => scheduleEntries.filter((entry) => isSameLocalDay(entry.dateISO, tomorrow)),
+    [scheduleEntries, tomorrow],
+  );
+  const entriesByDate = useMemo(() => {
+    return scheduleEntries.reduce<Record<string, ScheduleEntry[]>>((acc, entry) => {
+      const key = toLocalDateKey(entry.dateISO);
+      if (!acc[key]) acc[key] = [];
+      acc[key].push(entry);
+      return acc;
+    }, {});
+  }, [scheduleEntries]);
+
+  function openEntry(entry: ScheduleEntry) {
+    if (entry.kind === "Task" && entry.task) {
+      props.onOpenTask(entry.id, entry.task);
+      return;
+    }
+    if (entry.kind === "WaitingFor" && entry.waitingList) {
+      props.onOpenWaitingList(entry.id, entry.waitingList);
+    }
+  }
+
+  function renderEntry(entry: ScheduleEntry, compact = false) {
+    const secondary =
+      entry.kind === "Task"
+        ? entry.projectId
+          ? projectNameById.get(entry.projectId) || "未命名项目"
+          : "未关联项目"
+        : entry.owner || "未指定负责人";
+
+    return (
+      <button
+        key={entry.id}
+        type="button"
+        className={classNames(
+          "grid w-full gap-2 rounded-lg border px-3 py-2 text-left transition-colors hover:bg-[#F9FAFB]",
+          entry.kind === "Task" ? "border-[#C7D2FE] bg-[#EEF2FF]/60" : "border-[#FDE68A] bg-[#FFFBEB]",
+          compact && "px-2 py-2",
+        )}
+        onClick={() => openEntry(entry)}
+      >
+        <div className="flex items-center gap-2">
+          <Badge color={entryBadgeColor(entry)}>{entryBadgeLabel(entry)}</Badge>
+          {entry.kind === "Task" && entry.priority ? (
+            <Badge color="gray">{taskPriorityLabel(entry.priority)}</Badge>
+          ) : null}
+        </div>
+        <div className={classNames("font-medium text-[#111827]", compact ? "text-xs" : "text-sm")}>
+          {entry.title}
+        </div>
+        <div className={classNames("text-[#6B7280]", compact ? "text-[11px]" : "text-xs")}>
+          {secondary}
+        </div>
+      </button>
+    );
+  }
+
+  function renderAgendaColumn(title: string, subtitle: string, entries: ScheduleEntry[]) {
+    return (
+      <div className="grid gap-3 rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-4">
+        <div className="grid gap-1">
+          <div className="text-base font-semibold text-[#111827]">{title}</div>
+          <div className="text-sm text-[#6B7280]">{subtitle}</div>
+        </div>
+        {entries.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-[#D1D5DB] bg-white px-4 py-6 text-center text-sm text-[#9CA3AF]">
+            暂无事项
+          </div>
+        ) : (
+          <div className="grid gap-3">{entries.map((entry) => renderEntry(entry))}</div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto grid w-full max-w-7xl gap-4">
+      <div className="flex items-center justify-between">
+        <div className="grid gap-1">
+          <div className="text-lg font-semibold text-[#111827]">日程</div>
+          <div className="text-sm text-[#6B7280]">聚合任务截止日期与等待中预期完成时间</div>
+        </div>
+        <button
+          className="flex items-center gap-1 rounded-md border border-[#E6E8F0] bg-white px-3 py-1 text-sm text-[#374151] hover:bg-[#F5F6FA]"
+          type="button"
+          onClick={props.onRefresh}
+        >
+          <IconRefresh />
+          刷新
+        </button>
+      </div>
+
+      <div className="grid gap-4 rounded-lg border border-[#E6E8F0] bg-white p-4">
+        <div className="flex items-center gap-2 text-base font-semibold text-[#111827]">
+          <IconClock />
+          今天应完成
+        </div>
+        {props.loading ? (
+          <div className="rounded-lg border border-dashed border-[#D1D5DB] bg-[#F9FAFB] px-4 py-8 text-center text-sm text-[#9CA3AF]">
+            正在加载日程...
+          </div>
+        ) : (
+          <div className="grid gap-4 lg:grid-cols-2">
+            {renderAgendaColumn("今天", formatMonthDay(today), dueSoonToday)}
+            {renderAgendaColumn("明天", formatMonthDay(tomorrow), dueSoonTomorrow)}
+          </div>
+        )}
+      </div>
+
+      <div className="grid gap-4 rounded-lg border border-[#E6E8F0] bg-white p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-base font-semibold text-[#111827]">
+            <IconCalendar />
+            周视图
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="rounded-md border border-[#E6E8F0] bg-white px-3 py-1 text-sm text-[#374151] hover:bg-[#F5F6FA]"
+              onClick={() => setWeekAnchor((current) => addDays(current, -7))}
+            >
+              上一周
+            </button>
+            <button
+              type="button"
+              className="rounded-md border border-[#E6E8F0] bg-white px-3 py-1 text-sm text-[#374151] hover:bg-[#F5F6FA]"
+              onClick={() => setWeekAnchor(startOfLocalDay(new Date()))}
+            >
+              本周
+            </button>
+            <button
+              type="button"
+              className="rounded-md border border-[#E6E8F0] bg-white px-3 py-1 text-sm text-[#374151] hover:bg-[#F5F6FA]"
+              onClick={() => setWeekAnchor((current) => addDays(current, 7))}
+            >
+              下一周
+            </button>
+          </div>
+        </div>
+
+        <div className="text-sm font-medium text-[#4B5563]">{weekLabel}</div>
+
+        <div className="grid min-w-[980px] grid-cols-7 overflow-hidden rounded-lg border border-[#E5E7EB] bg-[#F9FAFB]">
+          {weekDays.map((day) => {
+            const key = toLocalDateKey(day);
+            const entries = entriesByDate[key] || [];
+            return (
+              <div key={key} className="min-h-[260px] border-r border-[#E5E7EB] last:border-r-0">
+                <div className="border-b border-[#E5E7EB] bg-white px-3 py-3">
+                  <div className="text-xs text-[#6B7280]">{formatWeekdayShort(day)}</div>
+                  <div className="mt-1 text-lg font-semibold text-[#111827]">{day.getDate()}</div>
+                </div>
+                <div className="grid gap-2 p-3">
+                  {entries.length === 0 ? (
+                    <div className="rounded-md border border-dashed border-[#D1D5DB] px-2 py-4 text-center text-xs text-[#9CA3AF]">
+                      暂无事项
+                    </div>
+                  ) : (
+                    entries.map((entry) => renderEntry(entry, true))
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>
