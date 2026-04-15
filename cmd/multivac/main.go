@@ -15,13 +15,22 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	"github.com/anyvoxel/multivac/internal/webui"
+	inboxapp "github.com/anyvoxel/multivac/pkg/inbox/application"
+	inboxsqlite "github.com/anyvoxel/multivac/pkg/inbox/infra/sqlite"
+	inboxhttp "github.com/anyvoxel/multivac/pkg/inbox/interfaces/http"
 	"github.com/anyvoxel/multivac/pkg/project/application"
 	"github.com/anyvoxel/multivac/pkg/project/infra/sqlite"
 	projecthttp "github.com/anyvoxel/multivac/pkg/project/interfaces/http"
+	somedayapp "github.com/anyvoxel/multivac/pkg/someday/application"
+	somedaysqlite "github.com/anyvoxel/multivac/pkg/someday/infra/sqlite"
+	somedayhttp "github.com/anyvoxel/multivac/pkg/someday/interfaces/http"
 	taskapp "github.com/anyvoxel/multivac/pkg/task/application"
 	tasksqlite "github.com/anyvoxel/multivac/pkg/task/infra/sqlite"
 	taskhttp "github.com/anyvoxel/multivac/pkg/task/interfaces/http"
 	"github.com/anyvoxel/multivac/pkg/utils/version"
+	waitinglistapp "github.com/anyvoxel/multivac/pkg/waitinglist/application"
+	waitinglistsqlite "github.com/anyvoxel/multivac/pkg/waitinglist/infra/sqlite"
+	waitinglisthttp "github.com/anyvoxel/multivac/pkg/waitinglist/interfaces/http"
 )
 
 func main() {
@@ -40,7 +49,7 @@ func main() {
 }
 
 func run(addr, dbPath string) error {
-	db, projHandler, taskHandler, err := setupServices(dbPath)
+	db, projHandler, taskHandler, inboxHandler, somedayHandler, waitingListHandler, err := setupServices(dbPath)
 	if err != nil {
 		return err
 	}
@@ -86,6 +95,24 @@ func run(addr, dbPath string) error {
 	api.PATCH("/projects/:id/status", projHandler.SetStatus)
 	api.DELETE("/projects/:id", projHandler.Delete)
 
+	api.POST("/inboxes", inboxHandler.Create)
+	api.GET("/inboxes", inboxHandler.List)
+	api.GET("/inboxes/:id", inboxHandler.Get)
+	api.PUT("/inboxes/:id", inboxHandler.Update)
+	api.DELETE("/inboxes/:id", inboxHandler.Delete)
+
+	api.POST("/somedays", somedayHandler.Create)
+	api.GET("/somedays", somedayHandler.List)
+	api.GET("/somedays/:id", somedayHandler.Get)
+	api.PUT("/somedays/:id", somedayHandler.Update)
+	api.DELETE("/somedays/:id", somedayHandler.Delete)
+
+	api.POST("/waiting-lists", waitingListHandler.Create)
+	api.GET("/waiting-lists", waitingListHandler.List)
+	api.GET("/waiting-lists/:id", waitingListHandler.Get)
+	api.PUT("/waiting-lists/:id", waitingListHandler.Update)
+	api.DELETE("/waiting-lists/:id", waitingListHandler.Delete)
+
 	api.POST("/tasks", taskHandler.Create)
 	api.GET("/tasks", taskHandler.List)
 	api.GET("/tasks/:id", taskHandler.Get)
@@ -122,27 +149,27 @@ func run(addr, dbPath string) error {
 	return nil
 }
 
-func setupServices(dbPath string) (*sqlx.DB, *projecthttp.Handler, *taskhttp.Handler, error) {
+func setupServices(dbPath string) (*sqlx.DB, *projecthttp.Handler, *taskhttp.Handler, *inboxhttp.Handler, *somedayhttp.Handler, *waitinglisthttp.Handler, error) {
 	db, err := sqlx.Open("sqlite3", dbPath)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	db.SetMaxOpenConns(1)
 	db.SetConnMaxLifetime(time.Minute)
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	if _, err := db.Exec("PRAGMA foreign_keys = ON;"); err != nil {
 		_ = db.Close()
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 
 	projRepo := sqlite.NewRepository(db)
 	projSvc := application.NewService(projRepo)
 	if err := projSvc.Migrate(context.Background()); err != nil {
 		_ = db.Close()
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	projHandler := projecthttp.NewHandler(projSvc)
 
@@ -150,9 +177,33 @@ func setupServices(dbPath string) (*sqlx.DB, *projecthttp.Handler, *taskhttp.Han
 	taskSvc := taskapp.NewService(taskRepo)
 	if err := taskSvc.Migrate(context.Background()); err != nil {
 		_ = db.Close()
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	taskHandler := taskhttp.NewHandler(taskSvc)
 
-	return db, projHandler, taskHandler, nil
+	inboxRepo := inboxsqlite.NewRepository(db)
+	inboxSvc := inboxapp.NewService(inboxRepo)
+	if err := inboxSvc.Migrate(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, nil, nil, nil, nil, nil, err
+	}
+	inboxHandler := inboxhttp.NewHandler(inboxSvc)
+
+	somedayRepo := somedaysqlite.NewRepository(db)
+	somedaySvc := somedayapp.NewService(somedayRepo)
+	if err := somedaySvc.Migrate(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, nil, nil, nil, nil, nil, err
+	}
+	somedayHandler := somedayhttp.NewHandler(somedaySvc)
+
+	waitingListRepo := waitinglistsqlite.NewRepository(db)
+	waitingListSvc := waitinglistapp.NewService(waitingListRepo)
+	if err := waitingListSvc.Migrate(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, nil, nil, nil, nil, nil, err
+	}
+	waitingListHandler := waitinglisthttp.NewHandler(waitingListSvc)
+
+	return db, projHandler, taskHandler, inboxHandler, somedayHandler, waitingListHandler, nil
 }
