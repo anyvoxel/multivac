@@ -1,3 +1,12 @@
+import {
+  createItem,
+  deleteItem,
+  getItem,
+  listItems,
+  updateItem,
+} from "./items";
+import type { Item, ItemBucket, ItemSortBy, SortDir } from "./items";
+
 export type Someday = {
   id: string;
   name: string;
@@ -14,7 +23,6 @@ export type CreateSomedayInput = {
 export type UpdateSomedayInput = CreateSomedayInput;
 
 export type SomedaySortBy = "CreatedAt" | "UpdatedAt" | "Name";
-export type SortDir = "Asc" | "Desc";
 
 export type ListSomedaysQuery = {
   search?: string;
@@ -24,65 +32,82 @@ export type ListSomedaysQuery = {
   offset?: number;
 };
 
-function apiBase(): string {
-  const v = import.meta.env.VITE_API_BASE as string | undefined;
-  if (v === undefined) return "";
-  return v;
+function mapSortBy(sortBy?: SomedaySortBy): ItemSortBy | undefined {
+  switch (sortBy) {
+    case "Name":
+      return "Title";
+    case "CreatedAt":
+      return "CreatedAt";
+    case "UpdatedAt":
+      return "UpdatedAt";
+    default:
+      return undefined;
+  }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${apiBase()}${path}`, {
-    ...init,
-    headers: {
-      "content-type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-  });
+function fromItem(item: Item): Someday {
+  return {
+    id: item.id,
+    name: item.title,
+    description: item.description,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+  };
+}
 
-  if (res.status === 204) {
-    return undefined as unknown as T;
-  }
-
-  const text = await res.text();
-  const data = text ? JSON.parse(text) : undefined;
-
-  if (!res.ok) {
-    const msg = (data && typeof data.error === "string" && data.error) || `${res.status} ${res.statusText}`;
-    throw new Error(msg);
-  }
-
-  return data as T;
+function somedayBucket(): ItemBucket {
+  return "SomedayMaybe";
 }
 
 export async function listSomedays(q?: ListSomedaysQuery): Promise<Someday[]> {
-  const sp = new URLSearchParams();
-  if (q?.search) sp.set("search", q.search);
-  if (q?.sortBy) sp.set("sortBy", q.sortBy);
-  if (q?.sortDir) sp.set("sortDir", q.sortDir);
-  if (q?.limit !== undefined) sp.set("limit", String(q.limit));
-  if (q?.offset !== undefined) sp.set("offset", String(q.offset));
-  const qs = sp.toString();
-  return request<Someday[]>(`/api/v1/somedays${qs ? `?${qs}` : ""}`);
+  const items = await listItems({
+    bucket: somedayBucket(),
+    search: q?.search,
+    sortBy: mapSortBy(q?.sortBy),
+    sortDir: q?.sortDir,
+    limit: q?.limit,
+    offset: q?.offset,
+  });
+  return items.map(fromItem);
 }
 
 export async function getSomeday(id: string): Promise<Someday> {
-  return request<Someday>(`/api/v1/somedays/${encodeURIComponent(id)}`);
+  return fromItem(await getItem(id));
 }
 
 export async function createSomeday(input: CreateSomedayInput): Promise<Someday> {
-  return request<Someday>("/api/v1/somedays", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+  return fromItem(
+    await createItem({
+      kind: "SomedayMaybe",
+      bucket: somedayBucket(),
+      title: input.name,
+      description: input.description,
+      context: "",
+      details: "",
+    }),
+  );
 }
 
 export async function updateSomeday(id: string, input: UpdateSomedayInput): Promise<Someday> {
-  return request<Someday>(`/api/v1/somedays/${encodeURIComponent(id)}`, {
-    method: "PUT",
-    body: JSON.stringify(input),
-  });
+  const current = await getItem(id);
+  return fromItem(
+    await updateItem(id, {
+      kind: current.kind,
+      bucket: current.bucket,
+      projectId: current.projectId,
+      title: input.name,
+      description: input.description,
+      context: current.context,
+      details: current.details,
+      taskStatus: current.taskStatus,
+      priority: current.priority,
+      waitingFor: current.waitingFor,
+      expectedAt: current.expectedAt,
+      dueAt: current.dueAt,
+    }),
+  );
 }
 
 export async function deleteSomeday(id: string): Promise<void> {
-  await request<void>(`/api/v1/somedays/${encodeURIComponent(id)}`, { method: "DELETE" });
+  await deleteItem(id);
 }

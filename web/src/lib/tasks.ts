@@ -1,7 +1,16 @@
+import {
+  createItem,
+  deleteItem,
+  getItem,
+  listItems,
+  updateItem,
+} from "./items";
+import type { Item, ItemBucket, ItemSortBy, SortDir } from "./items";
+
 export type TaskStatus = "Todo" | "InProgress" | "Done" | "Canceled";
 export type TaskPriority = "Low" | "Medium" | "High" | "P0";
 export type TaskSortBy = "DueAt";
-export type SortDir = "Asc" | "Desc";
+export type { SortDir };
 
 export type Task = {
   id: string;
@@ -49,122 +58,135 @@ export type ListTasksQuery = {
   offset?: number;
 };
 
-function apiBase(): string {
-  const v = import.meta.env.VITE_API_BASE as string | undefined;
-  if (v === undefined) return "";
-  return v;
+function fromItem(item: Item): Task {
+  return {
+    id: item.id,
+    projectId: item.projectId,
+    name: item.title,
+    description: item.description,
+    context: item.context,
+    details: item.details,
+    status: (item.taskStatus || "Todo") as TaskStatus,
+    priority: (item.priority || "Medium") as TaskPriority,
+    dueAt: item.dueAt,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+  };
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${apiBase()}${path}`, {
-    ...init,
-    headers: {
-      "content-type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-  });
-
-  if (res.status === 204) {
-    return undefined as unknown as T;
+function taskBucket(status?: TaskStatus): ItemBucket | undefined {
+  switch (status) {
+    case "Done":
+      return "Completed";
+    case "Canceled":
+      return "Dropped";
+    case "Todo":
+    case "InProgress":
+    case undefined:
+      return undefined;
+    default:
+      return undefined;
   }
+}
 
-  const text = await res.text();
-  const data = text ? JSON.parse(text) : undefined;
-
-  if (!res.ok) {
-    const msg =
-      (data && typeof data.error === "string" && data.error) ||
-      `${res.status} ${res.statusText}`;
-    throw new Error(msg);
+function taskSortBy(sortBy?: TaskSortBy): ItemSortBy | undefined {
+  switch (sortBy) {
+    case "DueAt":
+      return "DueAt";
+    default:
+      return undefined;
   }
-
-  return data as T;
 }
 
 export async function listTasksByProject(
   projectId: string,
   q?: ListTasksQuery,
 ): Promise<Task[]> {
-  const sp = new URLSearchParams();
-  if (q?.status) sp.set("status", q.status);
-  if (q?.search) sp.set("search", q.search);
-  if (q?.sortBy) sp.set("sortBy", q.sortBy);
-  if (q?.sortDir) sp.set("sortDir", q.sortDir);
-  if (q?.limit !== undefined) sp.set("limit", String(q.limit));
-  if (q?.offset !== undefined) sp.set("offset", String(q.offset));
-  const qs = sp.toString();
-  return request<Task[]>(
-    `/api/v1/projects/${encodeURIComponent(projectId)}/tasks${qs ? `?${qs}` : ""}`,
-  );
+  return listTasks({ ...q, projectId });
 }
 
 export async function listTasks(q?: ListTasksQuery): Promise<Task[]> {
-  const sp = new URLSearchParams();
-  if (q?.projectId) sp.set("projectId", q.projectId);
-  if (q?.status) sp.set("status", q.status);
-  if (q?.search) sp.set("search", q.search);
-  if (q?.sortBy) sp.set("sortBy", q.sortBy);
-  if (q?.sortDir) sp.set("sortDir", q.sortDir);
-  if (q?.limit !== undefined) sp.set("limit", String(q.limit));
-  if (q?.offset !== undefined) sp.set("offset", String(q.offset));
-  const qs = sp.toString();
-  return request<Task[]>(`/api/v1/tasks${qs ? `?${qs}` : ""}`);
+  const items = await listItems({
+    kind: "Task",
+    bucket: taskBucket(q?.status),
+    projectId: q?.projectId,
+    taskStatus: q?.status === "Todo" || q?.status === "InProgress" ? q.status : undefined,
+    search: q?.search,
+    sortBy: taskSortBy(q?.sortBy),
+    sortDir: q?.sortDir,
+    limit: q?.limit,
+    offset: q?.offset,
+  });
+  return items.map(fromItem);
 }
 
 export async function getTask(id: string): Promise<Task> {
-  return request<Task>(`/api/v1/tasks/${encodeURIComponent(id)}`);
+  return fromItem(await getItem(id));
 }
 
 export async function createTask(input: CreateTaskInput): Promise<Task> {
-  const body: Record<string, unknown> = {
-    name: input.name,
-    description: input.description,
-    context: input.context,
-    details: input.details,
-    priority: input.priority,
-  };
-  if (input.projectId !== undefined) body.projectId = input.projectId;
-  if (input.dueAt !== undefined) body.dueAt = input.dueAt;
-  if (input.status) body.status = input.status;
-
-  return request<Task>("/api/v1/tasks", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
+  return fromItem(
+    await createItem({
+      kind: "Task",
+      bucket: taskBucket(input.status) ?? "NextAction",
+      projectId: input.projectId,
+      title: input.name,
+      description: input.description,
+      context: input.context,
+      details: input.details,
+      taskStatus: input.status ?? "Todo",
+      priority: input.priority,
+      dueAt: input.dueAt,
+    }),
+  );
 }
 
 export async function updateTask(
   id: string,
   input: UpdateTaskInput,
 ): Promise<Task> {
-  const body: Record<string, unknown> = {
-    name: input.name,
-    description: input.description,
-    context: input.context,
-    details: input.details,
-    priority: input.priority,
-  };
-  if (input.projectId !== undefined) body.projectId = input.projectId;
-  if (input.dueAt !== undefined) body.dueAt = input.dueAt;
-
-  return request<Task>(`/api/v1/tasks/${encodeURIComponent(id)}`, {
-    method: "PUT",
-    body: JSON.stringify(body),
-  });
+  const current = await getItem(id);
+  return fromItem(
+    await updateItem(id, {
+      kind: current.kind,
+      bucket: current.bucket,
+      projectId: input.projectId,
+      title: input.name,
+      description: input.description,
+      context: input.context,
+      details: input.details,
+      taskStatus: current.taskStatus,
+      priority: input.priority,
+      waitingFor: current.waitingFor,
+      expectedAt: current.expectedAt,
+      dueAt: input.dueAt,
+    }),
+  );
 }
 
 export async function setTaskStatus(
   id: string,
   status: TaskStatus,
 ): Promise<Task> {
-  return request<Task>(`/api/v1/tasks/${encodeURIComponent(id)}/status`, {
-    method: "PATCH",
-    body: JSON.stringify({ status }),
-  });
+  const current = await getItem(id);
+  return fromItem(
+    await updateItem(id, {
+      kind: current.kind,
+      bucket: taskBucket(status) ?? "NextAction",
+      projectId: current.projectId,
+      title: current.title,
+      description: current.description,
+      context: current.context,
+      details: current.details,
+      taskStatus: status,
+      priority: current.priority,
+      waitingFor: current.waitingFor,
+      expectedAt: current.expectedAt,
+      dueAt: current.dueAt,
+    }),
+  );
 }
 
 export async function deleteTask(id: string): Promise<void> {
-  await request<void>(`/api/v1/tasks/${encodeURIComponent(id)}`, {
-    method: "DELETE",
-  });
+  await deleteItem(id);
 }

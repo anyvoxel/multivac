@@ -419,6 +419,15 @@ export default function App() {
 
   const normalizedSearch = search.trim();
 
+  function closeDrawer() {
+    setDrawer({ type: "none" });
+    setDrawerProject(null);
+    setDrawerTask(null);
+    setDrawerInbox(null);
+    setDrawerSomeday(null);
+    setDrawerWaitingList(null);
+  }
+
   useEffect(() => {
     if (!highlightTaskId) return;
     const timer = window.setTimeout(() => setHighlightTaskId(null), 2500);
@@ -555,16 +564,14 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route, waitingListOffset, waitingListPageSize, normalizedSearch]);
 
-  const pageLabel =
-    route === "projects"
-      ? "项目管理"
-      : route === "tasks"
-        ? "任务管理"
-        : route === "inboxes"
-          ? "收集箱管理"
-          : route === "somedays"
-            ? "将来/也许管理"
-            : "等待列表管理";
+  const pageLabelMap: Record<Route, string> = {
+    projects: "项目管理",
+    tasks: "任务管理",
+    inboxes: "收集箱管理",
+    somedays: "将来/也许管理",
+    waitingLists: "等待列表管理",
+  };
+  const pageLabel = pageLabelMap[route];
 
   async function openProjectDrawer(mode: "create" | "edit", id?: string) {
     setDrawerProject(null);
@@ -774,24 +781,24 @@ export default function App() {
   }
 
   async function onRefreshAll() {
-    if (route === "projects") {
-      await refreshProjects();
-      return;
+    switch (route) {
+      case "projects":
+        await refreshProjects();
+        return;
+      case "inboxes":
+        await refreshInboxes();
+        return;
+      case "somedays":
+        await refreshSomedays();
+        return;
+      case "waitingLists":
+        await refreshWaitingLists();
+        return;
+      case "tasks":
+      default:
+        await refreshProjects();
+        return;
     }
-    if (route === "inboxes") {
-      await refreshInboxes();
-      return;
-    }
-    if (route === "somedays") {
-      await refreshSomedays();
-      return;
-    }
-    if (route === "waitingLists") {
-      await refreshWaitingLists();
-      return;
-    }
-    await refreshProjects();
-    // tasks list refresh is handled inside TasksPage, but we keep this as no-op.
   }
 
   return (
@@ -1018,14 +1025,7 @@ export default function App() {
                       ? "将来/也许详情"
                       : "等待列表详情"
             }
-            onClose={() => {
-              setDrawer({ type: "none" });
-              setDrawerProject(null);
-              setDrawerTask(null);
-              setDrawerInbox(null);
-              setDrawerSomeday(null);
-              setDrawerWaitingList(null);
-            }}
+            onClose={closeDrawer}
             action={
               <button
                 className={classNames(
@@ -1056,8 +1056,7 @@ export default function App() {
                 onGotoTasks={(pid) => {
                   setTaskProjectId(pid);
                   setRoute("tasks");
-                  setDrawer({ type: "none" });
-                  setDrawerProject(null);
+                  closeDrawer();
                 }}
               />
             ) : drawer.type === "task" ? (
@@ -1181,8 +1180,7 @@ export default function App() {
           setLastTaskProjectId(drawerTask.projectId ?? "");
           setHighlightTaskId(created.id);
           setTaskListVersion((v) => v + 1);
-          setDrawer({ type: "none" });
-          setDrawerTask(null);
+          closeDrawer();
           return;
         }
         const t = await updateTask(drawerTask.id, {
@@ -1218,8 +1216,7 @@ export default function App() {
           });
         }
         await refreshInboxes();
-        setDrawer({ type: "none" });
-        setDrawerInbox(null);
+        closeDrawer();
         return;
       }
 
@@ -1237,8 +1234,7 @@ export default function App() {
           });
         }
         await refreshSomedays();
-        setDrawer({ type: "none" });
-        setDrawerSomeday(null);
+        closeDrawer();
         return;
       }
 
@@ -1263,8 +1259,7 @@ export default function App() {
           });
         }
         await refreshWaitingLists();
-        setDrawer({ type: "none" });
-        setDrawerWaitingList(null);
+        closeDrawer();
       }
     } catch (e) {
       setError(String(e));
@@ -2114,7 +2109,7 @@ function TasksPageNew(props: {
   const [offset, setOffset] = useState(0);
   const [pageSize, setPageSize] = useState(PAGE_SIZE_OPTIONS[0]);
   const [hasNext, setHasNext] = useState(false);
-  const [sortDir, setSortDir] = useState<SortDir | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir | null>("Asc");
   const [columnWidths, setColumnWidths] = useState<TaskColumnWidths>(() => loadTaskColumnWidths());
 
   useEffect(() => {
@@ -2151,7 +2146,7 @@ function TasksPageNew(props: {
   }
 
   function toggleDueAtSort() {
-    setSortDir((current) => {
+    setSortDir((current: SortDir | null) => {
       if (current === "Asc") return "Desc";
       if (current === "Desc") return null;
       return "Asc";
