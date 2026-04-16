@@ -79,23 +79,30 @@ func NewHandler(svc *application.Service) *Handler {
 }
 
 type createProjectReq struct {
-	Name         string `json:"name"`
-	Goal         string `json:"goal"`
-	Principles   string `json:"principles"`
-	VisionResult string `json:"visionResult"`
-	Description  string `json:"description"`
+	Name         string   `json:"name"`
+	Goal         string   `json:"goal"`
+	Principles   string   `json:"principles"`
+	VisionResult string   `json:"visionResult"`
+	Description  string   `json:"description"`
+	Links        []string `json:"links"`
 }
 
 type updateProjectReq struct {
-	Name         string `json:"name"`
-	Goal         string `json:"goal"`
-	Principles   string `json:"principles"`
-	VisionResult string `json:"visionResult"`
-	Description  string `json:"description"`
+	Name         string   `json:"name"`
+	Goal         string   `json:"goal"`
+	Principles   string   `json:"principles"`
+	VisionResult string   `json:"visionResult"`
+	Description  string   `json:"description"`
+	Links        []string `json:"links"`
 }
 
 type setStatusReq struct {
 	Status string `json:"status"`
+}
+
+type linkResp struct {
+	Label string `json:"label"`
+	URL   string `json:"url"`
 }
 
 type projectResp struct {
@@ -105,6 +112,7 @@ type projectResp struct {
 	Principles   string     `json:"principles"`
 	VisionResult string     `json:"visionResult"`
 	Description  string     `json:"description"`
+	Links        []linkResp `json:"links"`
 	Status       string     `json:"status"`
 	StartedAt    *time.Time `json:"startedAt,omitempty"`
 	CompletedAt  *time.Time `json:"completedAt,omitempty"`
@@ -113,6 +121,10 @@ type projectResp struct {
 }
 
 func toResp(p *domain.Project) projectResp {
+	links := make([]linkResp, 0, len(p.Links))
+	for _, link := range p.Links {
+		links = append(links, linkResp{Label: link.Label, URL: link.URL})
+	}
 	return projectResp{
 		ID:           p.ID,
 		Name:         p.Name,
@@ -120,6 +132,7 @@ func toResp(p *domain.Project) projectResp {
 		Principles:   p.Principles,
 		VisionResult: p.VisionResult,
 		Description:  p.Description,
+		Links:        links,
 		Status:       string(p.Status),
 		StartedAt:    p.StartedAt,
 		CompletedAt:  p.CompletedAt,
@@ -153,6 +166,7 @@ func (h *Handler) Create(c context.Context, ctx *app.RequestContext) {
 		Principles:   req.Principles,
 		VisionResult: req.VisionResult,
 		Description:  req.Description,
+		Links:        req.Links,
 	})
 	if err != nil {
 		writeErr(ctx, err)
@@ -225,6 +239,7 @@ func (h *Handler) Update(c context.Context, ctx *app.RequestContext) {
 		Principles:   req.Principles,
 		VisionResult: req.VisionResult,
 		Description:  req.Description,
+		Links:        req.Links,
 	})
 	if err != nil {
 		writeErr(ctx, err)

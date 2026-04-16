@@ -22,8 +22,14 @@ type Item struct {
 
 func NewItem(id string, kind Kind, bucket Bucket, now time.Time) (*Item, error) {
 	item := &Item{ID: id, Kind: kind, Bucket: bucket, CreatedAt: now, UpdatedAt: now}
-	if err := item.Validate(); err != nil {
+	if err := requiredFieldsError(requiredField(item.ID, "id")); err != nil {
 		return nil, err
+	}
+	if !item.Kind.Valid() {
+		return nil, InvalidKind(string(item.Kind))
+	}
+	if !item.Bucket.Valid() {
+		return nil, InvalidBucket(string(item.Bucket))
 	}
 	return item, nil
 }

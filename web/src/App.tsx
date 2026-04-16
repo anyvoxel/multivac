@@ -1,5 +1,21 @@
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { TextareaHTMLAttributes, InputHTMLAttributes } from "react";
+import {
+  BlockTypeSelect,
+  BoldItalicUnderlineToggles,
+  CreateLink,
+  ListsToggle,
+  MDXEditor,
+  type MDXEditorMethods,
+  headingsPlugin,
+  linkPlugin,
+  listsPlugin,
+  markdownShortcutPlugin,
+  quotePlugin,
+  toolbarPlugin,
+  UndoRedo,
+} from "@mdxeditor/editor";
 
 import {
   createProject,
@@ -74,6 +90,44 @@ const PAGE_SIZE_OPTIONS = [10, 20, 50];
 const LAST_TASK_PROJECT_STORAGE_KEY = "multivac:last-task-project-id";
 const EMPTY_TASK_PROJECT_SENTINEL = "__NONE__";
 const SCHEDULE_WEEK_STARTS_ON = 0;
+
+type ProjectDrawerState = Project & {
+  linkInputs: string[];
+  editingLinkIndex: number | null;
+  editingLinkValue: string;
+  editingLinkInitialValue: string;
+};
+
+function formatProjectLinkInput(link: Pick<Project["links"][number], "label" | "url">): string {
+  return link.label === link.url ? link.url : `[${link.label}](${link.url})`;
+}
+
+function normalizeProjectLinkInputs(inputs: string[]): string[] {
+  return inputs.map((line) => line.trim()).filter(Boolean);
+}
+
+function parseProjectLinkInput(input: string): { label: string; url: string } | null {
+  const value = input.trim();
+  if (!value) return null;
+  const match = value.match(/^\[(.+)\]\((https?:\/\/[^\s]+)\)$/);
+  if (match) {
+    return { label: match[1].trim(), url: match[2].trim() };
+  }
+  if (value.startsWith("http://") || value.startsWith("https://")) {
+    return { label: value, url: value };
+  }
+  return null;
+}
+
+function startProjectLinkEditing(p: ProjectDrawerState, index: number): ProjectDrawerState {
+  const value = p.linkInputs[index] ?? "";
+  return {
+    ...p,
+    editingLinkIndex: index,
+    editingLinkValue: value,
+    editingLinkInitialValue: value,
+  };
+}
 
 function classNames(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -482,9 +536,10 @@ export default function App() {
   >({ type: "none" });
   const [drawerLoading, setDrawerLoading] = useState(false);
   const [drawerSaving, setDrawerSaving] = useState(false);
-  const [drawerProject, setDrawerProject] = useState<Project | null>(null);
+  const [drawerProject, setDrawerProject] = useState<ProjectDrawerState | null>(null);
   const [drawerTask, setDrawerTask] = useState<Task | null>(null);
-  const [drawerInbox, setDrawerInbox] = useState<Inbox | null>(null);
+  const [drawerInbox, setDrawerInboxState] = useState<Inbox | null>(null);
+  const drawerInboxRef = useRef<Inbox | null>(null);
   const [drawerSomeday, setDrawerSomeday] = useState<Someday | null>(null);
   const [drawerWaitingList, setDrawerWaitingList] = useState<WaitingList | null>(null);
 
@@ -502,6 +557,11 @@ export default function App() {
   });
 
   const normalizedSearch = search.trim();
+
+  function setDrawerInbox(next: Inbox | null) {
+    drawerInboxRef.current = next;
+    setDrawerInboxState(next);
+  }
 
   function closeDrawer() {
     setDrawer({ type: "none" });
@@ -699,6 +759,11 @@ export default function App() {
           principles: "",
           visionResult: "",
           description: "",
+          links: [],
+          linkInputs: [],
+          editingLinkIndex: null,
+          editingLinkValue: "",
+          editingLinkInitialValue: "",
           status: "Draft",
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -708,7 +773,13 @@ export default function App() {
       if (!id) return;
       setDrawer({ type: "project", mode: "edit", id });
       const p = await getProject(id);
-      setDrawerProject(p);
+      setDrawerProject({
+        ...p,
+        linkInputs: p.links.map((link) => formatProjectLinkInput(link)),
+        editingLinkIndex: null,
+        editingLinkValue: "",
+        editingLinkInitialValue: "",
+      });
     } catch (e) {
       setError(String(e));
     } finally {
@@ -1263,10 +1334,15 @@ export default function App() {
   async function onSaveDrawer() {
     setDrawerSaving(true);
     setError("");
+    setInboxError("");
+    setSomedayError("");
+    setWaitingListError("");
+    setScheduleError("");
     try {
       if (drawer.type === "project") {
         if (!drawerProject) return;
         const status = drawerProject.status;
+        const links = normalizeProjectLinkInputs(drawerProject.linkInputs);
         if (drawer.mode === "create") {
           const p = await createProject({
             name: drawerProject.name,
@@ -1274,6 +1350,7 @@ export default function App() {
             principles: drawerProject.principles,
             visionResult: drawerProject.visionResult,
             description: drawerProject.description,
+            links,
           });
           if (status !== "Draft") {
             await setProjectStatus(p.id, status);
@@ -1290,6 +1367,7 @@ export default function App() {
           principles: drawerProject.principles,
           visionResult: drawerProject.visionResult,
           description: drawerProject.description,
+          links,
         });
         if (current.status !== status) {
           await setProjectStatus(drawerProject.id, status);
@@ -1340,16 +1418,17 @@ export default function App() {
       }
 
       if (drawer.type === "inbox") {
-        if (!drawerInbox) return;
+        const inbox = drawerInboxRef.current;
+        if (!inbox) return;
         if (drawer.mode === "create") {
           await createInbox({
-            name: drawerInbox.name,
-            description: drawerInbox.description,
+            name: inbox.name,
+            description: inbox.description,
           });
         } else {
-          await updateInbox(drawerInbox.id, {
-            name: drawerInbox.name,
-            description: drawerInbox.description,
+          await updateInbox(inbox.id, {
+            name: inbox.name,
+            description: inbox.description,
           });
         }
         await refreshInboxes();
@@ -1399,7 +1478,16 @@ export default function App() {
         closeDrawer();
       }
     } catch (e) {
-      setError(String(e));
+      const message = String(e);
+      if (drawer.type === "inbox") {
+        setInboxError(message);
+      } else if (drawer.type === "someday") {
+        setSomedayError(message);
+      } else if (drawer.type === "waitingList") {
+        setWaitingListError(message);
+      } else {
+        setError(message);
+      }
     } finally {
       setDrawerSaving(false);
     }
@@ -2755,7 +2843,7 @@ function Drawer(props: { title: string; action: ReactNode; onClose: () => void; 
   );
 }
 
-function Field(props: { label: string; children: ReactNode }) {
+function Field(props: { label: ReactNode; children: ReactNode }) {
   return (
     <div className="grid gap-1">
       <div className="text-xs font-medium text-[#6B7280]">{props.label}</div>
@@ -2764,13 +2852,24 @@ function Field(props: { label: string; children: ReactNode }) {
   );
 }
 
-function TextInput(props: { value: string; onChange: (v: string) => void; placeholder?: string }) {
+function TextInput(
+  props: {
+    value: string;
+    onChange: (v: string) => void;
+    placeholder?: string;
+  } & Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "placeholder">,
+) {
+  const { value, onChange, placeholder, className, ...rest } = props;
   return (
     <input
-      className="w-full rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm text-[#111827] outline-none focus:ring-2 focus:ring-[#4F46E5]"
-      value={props.value}
-      placeholder={props.placeholder}
-      onChange={(e) => props.onChange(e.target.value)}
+      {...rest}
+      className={classNames(
+        "w-full rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm text-[#111827] outline-none focus:ring-2 focus:ring-[#4F46E5]",
+        className,
+      )}
+      value={value}
+      placeholder={placeholder}
+      onChange={(e) => onChange(e.target.value)}
     />
   );
 }
@@ -2894,27 +2993,85 @@ function SearchableProjectSelect(props: {
   );
 }
 
-function TextArea(props: {
-  value: string;
-  onChange: (v: string) => void;
-  rows?: number;
-  placeholder?: string;
-}) {
+function TextArea(
+  props: {
+    value: string;
+    onChange: (v: string) => void;
+    rows?: number;
+    placeholder?: string;
+  } & Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "value" | "onChange" | "rows" | "placeholder">,
+) {
+  const { value, onChange, rows, placeholder, className, ...rest } = props;
   return (
     <textarea
-      className="w-full resize-y rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm text-[#111827] outline-none placeholder:text-[#9CA3AF] focus:ring-2 focus:ring-[#4F46E5]"
-      value={props.value}
-      rows={props.rows ?? 3}
-      placeholder={props.placeholder}
-      onChange={(e) => props.onChange(e.target.value)}
+      {...rest}
+      className={classNames(
+        "w-full resize-y rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm text-[#111827] outline-none placeholder:text-[#9CA3AF] focus:ring-2 focus:ring-[#4F46E5]",
+        className,
+      )}
+      value={value}
+      rows={rows ?? 3}
+      placeholder={placeholder}
+      onChange={(e) => onChange(e.target.value)}
     />
   );
 }
 
+function ProjectMarkdownEditor(props: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+}) {
+  const ref = useRef<MDXEditorMethods>(null);
+  const valueRef = useRef(props.value);
+
+  useEffect(() => {
+    if (props.value !== valueRef.current) {
+      ref.current?.setMarkdown(props.value);
+      valueRef.current = props.value;
+    }
+  }, [props.value]);
+
+  return (
+    <div className="project-md-editor rounded-md border border-[#E6E8F0] bg-white text-sm text-[#111827] focus-within:ring-2 focus-within:ring-[#4F46E5]">
+      <MDXEditor
+        ref={ref}
+        markdown={props.value}
+        placeholder={props.placeholder}
+        className="project-md-editor__root"
+        contentEditableClassName="project-md-editor__content markdown-preview"
+        onChange={(markdown, initialMarkdownNormalize) => {
+          valueRef.current = markdown;
+          if (initialMarkdownNormalize) return;
+          props.onChange(markdown);
+        }}
+        plugins={[
+          headingsPlugin(),
+          listsPlugin(),
+          quotePlugin(),
+          linkPlugin(),
+          markdownShortcutPlugin(),
+          toolbarPlugin({
+            toolbarContents: () => (
+              <>
+                <UndoRedo />
+                <BlockTypeSelect />
+                <BoldItalicUnderlineToggles />
+                <ListsToggle />
+                <CreateLink />
+              </>
+            ),
+          }),
+        ]}
+      />
+    </div>
+  );
+}
+
 function ProjectDrawerForm(props: {
-  project: Project | null;
+  project: ProjectDrawerState | null;
   mode: "create" | "edit";
-  onChange: (p: Project | null) => void;
+  onChange: (p: ProjectDrawerState | null) => void;
   onDelete: () => Promise<void>;
   onGotoTasks: (projectId: string) => void;
 }) {
@@ -2948,16 +3105,168 @@ function ProjectDrawerForm(props: {
         </Field>
       </div>
       <Field label="目标">
-        <TextInput value={p.goal} onChange={(v) => props.onChange({ ...p, goal: v })} />
+        <ProjectMarkdownEditor value={p.goal} onChange={(v) => props.onChange({ ...p, goal: v })} placeholder="输入目标" />
       </Field>
       <Field label="原则">
-        <TextArea value={p.principles} onChange={(v) => props.onChange({ ...p, principles: v })} rows={3} />
+        <ProjectMarkdownEditor value={p.principles} onChange={(v) => props.onChange({ ...p, principles: v })} placeholder="输入原则" />
       </Field>
       <Field label="背景 & 结果">
-        <TextArea value={p.visionResult} onChange={(v) => props.onChange({ ...p, visionResult: v })} rows={3} />
+        <ProjectMarkdownEditor value={p.visionResult} onChange={(v) => props.onChange({ ...p, visionResult: v })} placeholder="输入背景与结果" />
       </Field>
       <Field label="详细描述">
-        <TextArea value={p.description} onChange={(v) => props.onChange({ ...p, description: v })} rows={6} />
+        <ProjectMarkdownEditor value={p.description} onChange={(v) => props.onChange({ ...p, description: v })} placeholder="输入详细描述" />
+      </Field>
+      <Field
+        label={
+          <div className="flex items-center justify-between gap-3">
+            <span>资料链接</span>
+            <button
+              className="rounded-md border border-[#E6E8F0] bg-white px-3 py-1.5 text-sm font-medium text-[#4F46E5] hover:bg-[#F5F6FA]"
+              type="button"
+              onClick={() =>
+                props.onChange({
+                  ...p,
+                  editingLinkIndex: p.linkInputs.length,
+                  editingLinkValue: "",
+                  editingLinkInitialValue: "",
+                })
+              }
+            >
+              添加链接
+            </button>
+          </div>
+        }
+      >
+        <div className="grid gap-2">
+          {p.linkInputs.length || p.editingLinkIndex !== null ? (
+            <div className="grid gap-2 pt-1">
+              {p.linkInputs.map((input, index) => {
+                if (p.editingLinkIndex === index) {
+                  return (
+                    <div key={`editing-${index}`} className="rounded-md border border-[#E6E8F0] bg-white px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        <input
+                          className="min-w-0 flex-1 border-0 bg-transparent p-0 text-sm text-[#111827] outline-none placeholder:text-[#9CA3AF]"
+                          value={p.editingLinkValue}
+                          onChange={(e) => props.onChange({ ...p, editingLinkValue: e.target.value })}
+                          placeholder="支持 URL 或 [标题](https://example.com)"
+                          autoFocus
+                        />
+                        <button
+                          className="text-sm text-[#4F46E5] hover:underline"
+                          type="button"
+                          onClick={() => {
+                            const value = p.editingLinkValue.trim();
+                            if (!value) {
+                              const next = p.linkInputs.filter((_, i) => i !== index);
+                              props.onChange({
+                                ...p,
+                                linkInputs: next,
+                                editingLinkIndex: null,
+                                editingLinkValue: "",
+                                editingLinkInitialValue: "",
+                              });
+                              return;
+                            }
+                            const next = [...p.linkInputs];
+                            next[index] = value;
+                            props.onChange({
+                              ...p,
+                              linkInputs: next,
+                              editingLinkIndex: null,
+                              editingLinkValue: "",
+                              editingLinkInitialValue: "",
+                            });
+                          }}
+                        >
+                          确定
+                        </button>
+                        <button
+                          className="text-sm text-[#6B7280] hover:underline"
+                          type="button"
+                          onClick={() => {
+                            props.onChange({
+                              ...p,
+                              linkInputs:
+                                p.editingLinkInitialValue.trim() === ""
+                                  ? p.linkInputs.filter((_, i) => i !== index)
+                                  : p.linkInputs,
+                              editingLinkIndex: null,
+                              editingLinkValue: "",
+                              editingLinkInitialValue: "",
+                            });
+                          }}
+                        >
+                          取消
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+                const parsed = parseProjectLinkInput(input);
+                const displayText = parsed ? (parsed.label !== parsed.url ? parsed.label : parsed.url) : input.trim();
+                return (
+                  <div key={`preview-${index}`} className="flex items-center justify-between gap-3 rounded-md border border-[#E6E8F0] bg-white px-3 py-2">
+                    {parsed ? (
+                      <div className="group relative min-w-0 flex-1">
+                        <a
+                          className="block min-w-0 truncate text-sm text-[#111827] hover:text-[#4F46E5] hover:underline"
+                          href={parsed.url}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {displayText}
+                        </a>
+                        {parsed.label !== parsed.url ? (
+                          <div className="pointer-events-none absolute left-0 top-full z-10 mt-1 hidden max-w-[320px] break-all rounded-md bg-[#111827] px-2 py-1 text-xs text-white shadow-lg group-hover:block">
+                            {parsed.url}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <div className="min-w-0 truncate text-sm text-[#B91C1C]" title="请输入合法的 URL 或 markdown 链接">
+                        {displayText}
+                      </div>
+                    )}
+                    <div className="flex items-center gap-3 text-sm">
+                      <button
+                        className="text-[#4F46E5] hover:underline"
+                        type="button"
+                        onClick={() => props.onChange(startProjectLinkEditing(p, index))}
+                      >
+                        编辑
+                      </button>
+                      <button
+                        className="text-[#DC2626] hover:underline"
+                        type="button"
+                        onClick={() => {
+                          const next = p.linkInputs.filter((_, i) => i !== index);
+                          const editingLinkIndex =
+                            p.editingLinkIndex === null
+                              ? null
+                              : p.editingLinkIndex === index
+                                ? null
+                                : p.editingLinkIndex > index
+                                  ? p.editingLinkIndex - 1
+                                  : p.editingLinkIndex;
+                          props.onChange({
+                            ...p,
+                            linkInputs: next,
+                            editingLinkIndex,
+                            editingLinkValue: editingLinkIndex === null ? "" : p.editingLinkValue,
+                            editingLinkInitialValue: editingLinkIndex === null ? "" : p.editingLinkInitialValue,
+                          });
+                        }}
+                      >
+                        移除
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
       </Field>
 
       {props.mode === "edit" ? (
@@ -2989,16 +3298,33 @@ function InboxDrawerForm(props: {
   onDelete: () => Promise<void>;
 }) {
   const inbox = props.inbox;
+  const [draftName, setDraftName] = useState("");
+  const [draftDescription, setDraftDescription] = useState("");
+
+  useEffect(() => {
+    setDraftName(inbox?.name ?? "");
+    setDraftDescription(inbox?.description ?? "");
+  }, [inbox?.id, inbox?.name, inbox?.description]);
+
   if (!inbox) return <div className="px-4 py-6 text-sm text-[#6B7280]">无数据</div>;
   return (
     <div className="grid gap-3 px-4 py-4">
       <Field label="名称">
-        <TextInput value={inbox.name} onChange={(v) => props.onChange({ ...inbox, name: v })} />
+        <TextInput
+          value={draftName}
+          onChange={(v) => {
+            setDraftName(v);
+            props.onChange({ ...inbox, name: v, description: draftDescription });
+          }}
+        />
       </Field>
       <Field label="详细描述">
         <TextArea
-          value={inbox.description}
-          onChange={(v) => props.onChange({ ...inbox, description: v })}
+          value={draftDescription}
+          onChange={(v) => {
+            setDraftDescription(v);
+            props.onChange({ ...inbox, name: draftName, description: v });
+          }}
           rows={8}
         />
       </Field>

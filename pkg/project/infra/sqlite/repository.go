@@ -4,6 +4,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -83,6 +84,7 @@ CREATE TABLE IF NOT EXISTS projects (
   principles TEXT NOT NULL,
   vision_result TEXT NOT NULL,
   description TEXT NOT NULL,
+  links TEXT NOT NULL DEFAULT '[]',
   status TEXT NOT NULL,
   started_at DATETIME NULL,
   completed_at DATETIME NULL,
@@ -91,8 +93,13 @@ CREATE TABLE IF NOT EXISTS projects (
 );
 CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
 `
-	_, err := r.db.ExecContext(ctx, ddl)
-	return err
+	if _, err := r.db.ExecContext(ctx, ddl); err != nil {
+		return err
+	}
+	if _, err := r.db.ExecContext(ctx, `ALTER TABLE projects ADD COLUMN links TEXT NOT NULL DEFAULT '[]';`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+		return err
+	}
+	return nil
 }
 
 type projectRow struct {
@@ -102,6 +109,7 @@ type projectRow struct {
 	Principles   string       `db:"principles"`
 	VisionResult string       `db:"vision_result"`
 	Description  string       `db:"description"`
+	Links        string       `db:"links"`
 	Status       string       `db:"status"`
 	StartedAt    sql.NullTime `db:"started_at"`
 	CompletedAt  sql.NullTime `db:"completed_at"`
@@ -115,6 +123,11 @@ func toDomain(row projectRow) (*domain.Project, error) {
 		return nil, domain.ErrInvalidArg
 	}
 
+	links, err := unmarshalLinks(row.Links)
+	if err != nil {
+		return nil, err
+	}
+
 	p := &domain.Project{
 		ID:           row.ID,
 		Name:         row.Name,
@@ -122,6 +135,7 @@ func toDomain(row projectRow) (*domain.Project, error) {
 		Principles:   row.Principles,
 		VisionResult: row.VisionResult,
 		Description:  row.Description,
+		Links:        links,
 		Status:       status,
 	}
 	if row.StartedAt.Valid {
@@ -141,14 +155,40 @@ func toDomain(row projectRow) (*domain.Project, error) {
 	return p, nil
 }
 
+func marshalLinks(links []domain.Link) (string, error) {
+	if len(links) == 0 {
+		return "[]", nil
+	}
+	data, err := json.Marshal(links)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func unmarshalLinks(raw string) ([]domain.Link, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	var links []domain.Link
+	if err := json.Unmarshal([]byte(raw), &links); err != nil {
+		return nil, err
+	}
+	return links, nil
+}
+
 // Create inserts a new project.
 func (r *Repository) Create(ctx context.Context, p *domain.Project) error {
+	links, err := marshalLinks(p.Links)
+	if err != nil {
+		return err
+	}
 	const q = `
 INSERT INTO projects (
-  id, name, goal, principles, vision_result, description, status,
+  id, name, goal, principles, vision_result, description, links, status,
   started_at, completed_at, created_at, updated_at
 ) VALUES (
-  :id, :name, :goal, :principles, :vision_result, :description, :status,
+  :id, :name, :goal, :principles, :vision_result, :description, :links, :status,
   :started_at, :completed_at, :created_at, :updated_at
 );
 `
@@ -159,20 +199,21 @@ INSERT INTO projects (
 		"principles":    p.Principles,
 		"vision_result": p.VisionResult,
 		"description":   p.Description,
+		"links":         links,
 		"status":        string(p.Status),
 		"started_at":    p.StartedAt,
 		"completed_at":  p.CompletedAt,
 		"created_at":    p.CreatedAt,
 		"updated_at":    p.UpdatedAt,
 	}
-	_, err := r.db.NamedExecContext(ctx, q, params)
+	_, err = r.db.NamedExecContext(ctx, q, params)
 	return err
 }
 
 // Get loads a project by id.
 func (r *Repository) Get(ctx context.Context, id string) (*domain.Project, error) {
 	const q = `
-SELECT id, name, goal, principles, vision_result, description, status,
+SELECT id, name, goal, principles, vision_result, description, links, status,
        started_at, completed_at, created_at, updated_at
 FROM projects
 WHERE id = ?;
@@ -194,7 +235,7 @@ func (r *Repository) List(ctx context.Context, q domain.ListQuery) ([]*domain.Pr
 	}
 
 	base := `
-SELECT id, name, goal, principles, vision_result, description, status,
+SELECT id, name, goal, principles, vision_result, description, links, status,
        started_at, completed_at, created_at, updated_at
 FROM projects
 `
@@ -224,6 +265,10 @@ FROM projects
 
 // Update updates a project by id.
 func (r *Repository) Update(ctx context.Context, p *domain.Project) error {
+	links, err := marshalLinks(p.Links)
+	if err != nil {
+		return err
+	}
 	const q = `
 UPDATE projects SET
   name = :name,
@@ -231,6 +276,7 @@ UPDATE projects SET
   principles = :principles,
   vision_result = :vision_result,
   description = :description,
+  links = :links,
   status = :status,
   started_at = :started_at,
   completed_at = :completed_at,
@@ -244,6 +290,7 @@ WHERE id = :id;
 		"principles":    p.Principles,
 		"vision_result": p.VisionResult,
 		"description":   p.Description,
+		"links":         links,
 		"status":        string(p.Status),
 		"started_at":    p.StartedAt,
 		"completed_at":  p.CompletedAt,

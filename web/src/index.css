@@ -1,3 +1,5 @@
+@import "@mdxeditor/editor/style.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -78,5 +80,130 @@
   body {
     @apply bg-[hsl(var(--background))] text-[hsl(var(--foreground))];
   }
+}
+
+.markdown-preview > *:first-child {
+  margin-top: 0;
+}
+
+.markdown-preview > *:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-preview p,
+.markdown-preview ul,
+.markdown-preview ol,
+.markdown-preview pre,
+.markdown-preview blockquote {
+  margin: 0.5rem 0;
+}
+
+.markdown-preview ul,
+.markdown-preview ol {
+  padding-left: 1.25rem;
+}
+
+.markdown-preview ul {
+  list-style: disc;
+}
+
+.markdown-preview ol {
+  list-style: decimal;
+}
+
+.markdown-preview h1,
+.markdown-preview h2,
+.markdown-preview h3,
+.markdown-preview h4,
+.markdown-preview h5,
+.markdown-preview h6 {
+  margin: 0.75rem 0 0.5rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.markdown-preview h1 {
+  font-size: 1.25rem;
+}
+
+.markdown-preview h2 {
+  font-size: 1.125rem;
+}
+
+.markdown-preview h3 {
+  font-size: 1rem;
+}
+
+.markdown-preview a {
+  color: #4f46e5;
+  text-decoration: underline;
+}
+
+.markdown-preview code {
+  border-radius: 0.25rem;
+  background: #eef2ff;
+  padding: 0.1rem 0.3rem;
+  font-size: 0.875em;
+}
+
+.markdown-preview pre {
+  overflow-x: auto;
+  border-radius: 0.375rem;
+  background: #111827;
+  padding: 0.75rem;
+  color: white;
+}
+
+.markdown-preview pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+
+.markdown-preview blockquote {
+  border-left: 3px solid #c7d2fe;
+  padding-left: 0.75rem;
+  color: #4b5563;
+}
+
+.project-md-editor {
+  overflow: hidden;
+}
+
+.project-md-editor__root {
+  font-size: 0.875rem;
+}
+
+.project-md-editor__root .mdxeditor-toolbar {
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  border-bottom: 1px solid #e6e8f0;
+  background: #fafbff;
+  padding: 0.5rem;
+}
+
+.project-md-editor__root .mdxeditor-toolbar button,
+.project-md-editor__root .mdxeditor-toolbar [role="button"] {
+  min-height: 2rem;
+}
+
+.project-md-editor__content {
+  min-height: 6rem;
+  padding: 0.75rem;
+  outline: none;
+}
+
+.project-md-editor__content[data-placeholder]:empty::before {
+  color: #9ca3af;
+  content: attr(data-placeholder);
+}
+
+.project-md-editor__content h1,
+.project-md-editor__content h2,
+.project-md-editor__content h3,
+.project-md-editor__content h4,
+.project-md-editor__content h5,
+.project-md-editor__content h6 {
+  margin-top: 0.75rem;
 }
 

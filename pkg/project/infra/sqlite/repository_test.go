@@ -23,7 +23,7 @@ func TestRepositoryCRUD(t *testing.T) {
 	g.Expect(repo.Migrate(ctx)).To(gomega.Succeed())
 
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	p, err := domain.NewProject("p1", "n", "g", "pr", "vr", "d", now)
+	p, err := domain.NewProject("p1", "n", "g", "pr", "vr", "d", nil, now)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
 	g.Expect(repo.Create(ctx, p)).To(gomega.Succeed())
@@ -39,7 +39,7 @@ func TestRepositoryCRUD(t *testing.T) {
 	g.Expect(list).To(gomega.HaveLen(1))
 
 	now2 := now.Add(time.Hour)
-	g.Expect(p.UpdateDetails("n2", "g2", "pr2", "vr2", "d2", now2)).To(gomega.Succeed())
+	g.Expect(p.UpdateDetails("n2", "g2", "pr2", "vr2", "d2", nil, now2)).To(gomega.Succeed())
 	g.Expect(p.SetStatus(domain.StatusActive, now2)).To(gomega.Succeed())
 	g.Expect(repo.Update(ctx, p)).To(gomega.Succeed())
 
@@ -66,11 +66,11 @@ func TestRepositoryListSupportsSearchPaginationAndSort(t *testing.T) {
 	g.Expect(repo.Migrate(ctx)).To(gomega.Succeed())
 
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
-	alpha, err := domain.NewProject("p1", "Alpha Search", "Goal One", "Principle", "Vision", "Desc", now)
+	alpha, err := domain.NewProject("p1", "Alpha Search", "Goal One", "Principle", "Vision", "Desc", nil, now)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
-	beta, err := domain.NewProject("p2", "Beta", "Search Goal", "Principle", "Vision", "Desc", now.Add(time.Minute))
+	beta, err := domain.NewProject("p2", "Beta", "Search Goal", "Principle", "Vision", "Desc", nil, now.Add(time.Minute))
 	g.Expect(err).ToNot(gomega.HaveOccurred())
-	gamma, err := domain.NewProject("p3", "Gamma", "Other", "Principle", "Vision Search", "Desc", now.Add(2*time.Minute))
+	gamma, err := domain.NewProject("p3", "Gamma", "Other", "Principle", "Vision Search", "Desc", nil, now.Add(2*time.Minute))
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(gamma.SetStatus(domain.StatusActive, now.Add(3*time.Minute))).To(gomega.Succeed())
 

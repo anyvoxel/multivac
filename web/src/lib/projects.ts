@@ -1,5 +1,10 @@
 export type ProjectStatus = "Draft" | "Active" | "Completed" | "Archived";
 
+export type ProjectLink = {
+  label: string;
+  url: string;
+};
+
 export type Project = {
   id: string;
   name: string;
@@ -7,6 +12,7 @@ export type Project = {
   principles: string;
   visionResult: string;
   description: string;
+  links: ProjectLink[];
   status: ProjectStatus;
   startedAt?: string;
   completedAt?: string;
@@ -20,6 +26,7 @@ export type CreateProjectInput = {
   principles: string;
   visionResult: string;
   description: string;
+  links: string[];
 };
 
 export type UpdateProjectInput = CreateProjectInput;

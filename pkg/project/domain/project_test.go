@@ -11,7 +11,7 @@ func TestProjectLifecycle(t *testing.T) {
 	g := gomega.NewWithT(t)
 
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	p, err := NewProject("id", "name", "goal", "principles", "vision", "desc", now)
+	p, err := NewProject("id", "name", "goal", "principles", "vision", "desc", nil, now)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(p.Status).To(gomega.Equal(StatusDraft))
 	g.Expect(p.CreatedAt).To(gomega.Equal(now))
@@ -34,7 +34,7 @@ func TestProjectLifecycle(t *testing.T) {
 func TestNewProjectValidationErrorIncludesMissingFields(t *testing.T) {
 	g := gomega.NewWithT(t)
 
-	_, err := NewProject("id", "", "", "principles", "", "", time.Now())
+	_, err := NewProject("id", "", "", "principles", "", "", nil, time.Now())
 	g.Expect(err).To(gomega.MatchError("invalid argument: [name: Required value, goal: Required value, visionResult: Required value, description: Required value]"))
 	g.Expect(err).To(gomega.MatchError(gomega.HavePrefix("invalid argument:")))
 	g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("name: Required value")))
@@ -44,17 +44,17 @@ func TestNewProjectValidationErrorIncludesMissingFields(t *testing.T) {
 func TestProjectUpdateValidationErrorIncludesMissingFields(t *testing.T) {
 	g := gomega.NewWithT(t)
 
-	p, err := NewProject("id", "name", "goal", "principles", "vision", "desc", time.Now())
+	p, err := NewProject("id", "name", "goal", "principles", "vision", "desc", nil, time.Now())
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
-	err = p.UpdateDetails("", "goal", "", "vision", "", time.Now())
+	err = p.UpdateDetails("", "goal", "", "vision", "", nil, time.Now())
 	g.Expect(err).To(gomega.MatchError("invalid argument: [name: Required value, principles: Required value, description: Required value]"))
 }
 
 func TestProjectSetStatusValidationErrorIncludesField(t *testing.T) {
 	g := gomega.NewWithT(t)
 
-	p, err := NewProject("id", "name", "goal", "principles", "vision", "desc", time.Now())
+	p, err := NewProject("id", "name", "goal", "principles", "vision", "desc", nil, time.Now())
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
 	err = p.SetStatus(Status("wat"), time.Now())
