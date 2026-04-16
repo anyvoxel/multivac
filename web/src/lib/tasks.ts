@@ -6,6 +6,7 @@ import {
   updateItem,
 } from "./items";
 import type { Item, ItemBucket, ItemSortBy, SortDir } from "./items";
+import type { Label } from "./projects";
 
 export type TaskStatus = "Todo" | "InProgress" | "Done" | "Canceled";
 export type TaskPriority = "Low" | "Medium" | "High" | "P0";
@@ -17,6 +18,7 @@ export type Task = {
   projectId?: string;
   name: string;
   description: string;
+  labels: Label[];
   context: string;
   details: string;
   status: TaskStatus;
@@ -30,6 +32,7 @@ export type CreateTaskInput = {
   projectId?: string;
   name: string;
   description: string;
+  labels: Label[];
   context: string;
   details: string;
   priority: TaskPriority;
@@ -42,6 +45,7 @@ export type UpdateTaskInput = {
   projectId?: string;
   name: string;
   description: string;
+  labels: Label[];
   context: string;
   details: string;
   priority: TaskPriority;
@@ -52,6 +56,8 @@ export type ListTasksQuery = {
   projectId?: string;
   status?: TaskStatus;
   search?: string;
+  contexts?: string[];
+  tags?: string[];
   sortBy?: TaskSortBy;
   sortDir?: SortDir;
   limit?: number;
@@ -64,6 +70,7 @@ function fromItem(item: Item): Task {
     projectId: item.projectId,
     name: item.title,
     description: item.description,
+    labels: item.labels,
     context: item.context,
     details: item.details,
     status: (item.taskStatus || "Todo") as TaskStatus,
@@ -112,6 +119,8 @@ export async function listTasks(q?: ListTasksQuery): Promise<Task[]> {
     projectId: q?.projectId,
     taskStatus: q?.status === "Todo" || q?.status === "InProgress" ? q.status : undefined,
     search: q?.search,
+    contexts: q?.contexts,
+    tags: q?.tags,
     sortBy: taskSortBy(q?.sortBy),
     sortDir: q?.sortDir,
     limit: q?.limit,
@@ -132,6 +141,7 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
       projectId: input.projectId,
       title: input.name,
       description: input.description,
+      labels: input.labels,
       context: input.context,
       details: input.details,
       taskStatus: input.status ?? "Todo",
@@ -153,6 +163,7 @@ export async function updateTask(
       projectId: input.projectId,
       title: input.name,
       description: input.description,
+      labels: input.labels,
       context: input.context,
       details: input.details,
       taskStatus: current.taskStatus,
@@ -176,6 +187,7 @@ export async function setTaskStatus(
       projectId: current.projectId,
       title: current.title,
       description: current.description,
+      labels: current.labels,
       context: current.context,
       details: current.details,
       taskStatus: status,

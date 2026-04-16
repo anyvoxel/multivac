@@ -2,6 +2,7 @@ package domain
 
 import (
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -10,14 +11,33 @@ type Link struct {
 	URL   string
 }
 
+type LabelKind string
+
+const (
+	LabelKindContext LabelKind = "Context"
+	LabelKindTag     LabelKind = "Tag"
+)
+
+type Label struct {
+	Value      string
+	Kind       LabelKind
+	Filterable bool
+}
+
+type Goal struct {
+	Text        string
+	Completed   bool
+	CreatedAt   time.Time
+	CompletedAt *time.Time
+}
+
 // Project is the aggregate root for project management.
 type Project struct {
 	ID           string
 	Name         string
-	Goal         string
-	Principles   string
-	VisionResult string
+	Goals        []Goal
 	Description  string
+	Labels       []Label
 	Links        []Link
 	Status       Status
 
@@ -28,18 +48,17 @@ type Project struct {
 }
 
 // NewProject creates a Project in draft status.
-func NewProject(id, name, goal, principles, visionResult, description string, links []Link, now time.Time) (*Project, error) {
+func NewProject(id, name string, goals []Goal, description string, links []Link, now time.Time) (*Project, error) {
 	if err := requiredFieldsError(
 		requiredField(id, "id"),
 		requiredField(name, "name"),
-		requiredField(goal, "goal"),
-		requiredField(principles, "principles"),
-		requiredField(visionResult, "visionResult"),
 		requiredField(description, "description"),
 	); err != nil {
 		return nil, err
 	}
-
+	if err := validateGoals(goals); err != nil {
+		return nil, err
+	}
 	if err := validateLinks(links); err != nil {
 		return nil, err
 	}
@@ -47,9 +66,7 @@ func NewProject(id, name, goal, principles, visionResult, description string, li
 	return &Project{
 		ID:           id,
 		Name:         name,
-		Goal:         goal,
-		Principles:   principles,
-		VisionResult: visionResult,
+		Goals:        normalizeGoals(goals, now),
 		Description:  description,
 		Links:        cloneLinks(links),
 		Status:       StatusDraft,
@@ -59,26 +76,24 @@ func NewProject(id, name, goal, principles, visionResult, description string, li
 }
 
 // UpdateDetails replaces core textual fields.
-func (p *Project) UpdateDetails(name, goal, principles, visionResult, description string, links []Link, now time.Time) error {
+func (p *Project) UpdateDetails(name string, goals []Goal, description string, links []Link, now time.Time) error {
 	if p == nil {
 		return ErrInvalidArg
 	}
 	if err := requiredFieldsError(
 		requiredField(name, "name"),
-		requiredField(goal, "goal"),
-		requiredField(principles, "principles"),
-		requiredField(visionResult, "visionResult"),
 		requiredField(description, "description"),
 	); err != nil {
+		return err
+	}
+	if err := validateGoals(goals); err != nil {
 		return err
 	}
 	if err := validateLinks(links); err != nil {
 		return err
 	}
 	p.Name = name
-	p.Goal = goal
-	p.Principles = principles
-	p.VisionResult = visionResult
+	p.Goals = normalizeGoals(goals, now)
 	p.Description = description
 	p.Links = cloneLinks(links)
 	p.UpdatedAt = now
@@ -136,6 +151,47 @@ func cloneLinks(links []Link) []Link {
 	}
 	out := make([]Link, len(links))
 	copy(out, links)
+	return out
+}
+
+func validateGoals(goals []Goal) error {
+	for i, goal := range goals {
+		text := strings.TrimSpace(goal.Text)
+		if text == "" {
+			return &ValidationError{Problems: []string{`goals[` + itoa(i) + `].text: Required value`}}
+		}
+		if strings.Contains(text, "\n") || strings.Contains(text, "\r") {
+			return invalidFieldValueError(`goals[`+itoa(i)+`].text`, goal.Text)
+		}
+	}
+	return nil
+}
+
+func normalizeGoals(goals []Goal, now time.Time) []Goal {
+	if len(goals) == 0 {
+		return nil
+	}
+	out := make([]Goal, 0, len(goals))
+	for _, goal := range goals {
+		text := strings.TrimSpace(goal.Text)
+		g := Goal{Text: text}
+		if goal.CreatedAt.IsZero() {
+			g.CreatedAt = now
+		} else {
+			g.CreatedAt = goal.CreatedAt
+		}
+		if goal.Completed {
+			g.Completed = true
+			if goal.CompletedAt != nil {
+				t := *goal.CompletedAt
+				g.CompletedAt = &t
+			} else {
+				t := now
+				g.CompletedAt = &t
+			}
+		}
+		out = append(out, g)
+	}
 	return out
 }
 

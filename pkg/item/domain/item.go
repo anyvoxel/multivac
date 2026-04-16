@@ -9,6 +9,7 @@ type Item struct {
 	ProjectID   string
 	Title       string
 	Description string
+	Labels      []Label
 	Context     string
 	Details     string
 	TaskStatus  string

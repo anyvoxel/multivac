@@ -42,6 +42,8 @@ type ListQuery struct {
 	ProjectID  string
 	TaskStatus string
 	Search     string
+	Contexts   []string
+	Tags       []string
 	Sorts      []Sort
 	Limit      int
 	Offset     int

@@ -33,6 +33,7 @@ type CreateItemCmd struct {
 	ProjectID   string
 	Title       string
 	Description string
+	Labels      []domain.Label
 	Context     string
 	Details     string
 	TaskStatus  string
@@ -59,6 +60,7 @@ func (s *Service) Create(ctx context.Context, cmd CreateItemCmd) (*domain.Item, 
 	item.ProjectID = cmd.ProjectID
 	item.Title = cmd.Title
 	item.Description = cmd.Description
+	item.Labels = cmd.Labels
 	item.Context = cmd.Context
 	item.Details = cmd.Details
 	item.TaskStatus = cmd.TaskStatus
@@ -92,6 +94,7 @@ func (s *Service) Update(ctx context.Context, id string, cmd UpdateItemCmd) (*do
 	item.ProjectID = cmd.ProjectID
 	item.Title = cmd.Title
 	item.Description = cmd.Description
+	item.Labels = cmd.Labels
 	item.Context = cmd.Context
 	item.Details = cmd.Details
 	item.TaskStatus = cmd.TaskStatus

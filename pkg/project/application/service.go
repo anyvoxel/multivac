@@ -38,12 +38,11 @@ func NewService(repo domain.Repository, opts ...Option) *Service {
 
 // CreateProjectCmd describes input for creating a project.
 type CreateProjectCmd struct {
-	Name         string
-	Goal         string
-	Principles   string
-	VisionResult string
-	Description  string
-	Links        []string
+	Name        string
+	Goals       []domain.Goal
+	Description string
+	Labels      []domain.Label
+	Links       []string
 }
 
 // Migrate ensures persistence schema is ready.
@@ -64,10 +63,11 @@ func (s *Service) Create(ctx context.Context, cmd CreateProjectCmd) (*domain.Pro
 	if err != nil {
 		return nil, err
 	}
-	p, err := domain.NewProject(id, cmd.Name, cmd.Goal, cmd.Principles, cmd.VisionResult, cmd.Description, links, now)
+	p, err := domain.NewProject(id, cmd.Name, cmd.Goals, cmd.Description, links, now)
 	if err != nil {
 		return nil, err
 	}
+	p.Labels = append([]domain.Label(nil), cmd.Labels...)
 	if err := s.repo.Create(ctx, p); err != nil {
 		return nil, err
 	}
@@ -86,12 +86,11 @@ func (s *Service) List(ctx context.Context, q domain.ListQuery) ([]*domain.Proje
 
 // UpdateProjectCmd describes input for updating a project.
 type UpdateProjectCmd struct {
-	Name         string
-	Goal         string
-	Principles   string
-	VisionResult string
-	Description  string
-	Links        []string
+	Name        string
+	Goals       []domain.Goal
+	Description string
+	Labels      []domain.Label
+	Links       []string
 }
 
 // Update updates textual fields of a project.
@@ -104,9 +103,10 @@ func (s *Service) Update(ctx context.Context, id string, cmd UpdateProjectCmd) (
 	if err != nil {
 		return nil, err
 	}
-	if err := p.UpdateDetails(cmd.Name, cmd.Goal, cmd.Principles, cmd.VisionResult, cmd.Description, links, s.now()); err != nil {
+	if err := p.UpdateDetails(cmd.Name, cmd.Goals, cmd.Description, links, s.now()); err != nil {
 		return nil, err
 	}
+	p.Labels = append([]domain.Label(nil), cmd.Labels...)
 	if err := s.repo.Update(ctx, p); err != nil {
 		return nil, err
 	}

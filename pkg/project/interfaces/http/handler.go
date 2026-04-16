@@ -15,6 +15,30 @@ import (
 	"github.com/anyvoxel/multivac/pkg/project/domain"
 )
 
+func splitCSV(v string) []string {
+	if strings.TrimSpace(v) == "" {
+		return nil
+	}
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	seen := map[string]struct{}{}
+	for _, part := range parts {
+		normalized := strings.ToLower(strings.TrimSpace(part))
+		if normalized == "" {
+			continue
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func parseProjectSortBy(v string) (domain.SortBy, bool) {
 	switch strings.ToLower(v) {
 	case "createdat", "created_at":
@@ -78,22 +102,31 @@ func NewHandler(svc *application.Service) *Handler {
 	return &Handler{svc: svc}
 }
 
+type labelReq struct {
+	Value string `json:"value"`
+}
+
+type goalReq struct {
+	Text        string     `json:"text"`
+	Completed   bool       `json:"completed"`
+	CreatedAt   *time.Time `json:"createdAt,omitempty"`
+	CompletedAt *time.Time `json:"completedAt,omitempty"`
+}
+
 type createProjectReq struct {
-	Name         string   `json:"name"`
-	Goal         string   `json:"goal"`
-	Principles   string   `json:"principles"`
-	VisionResult string   `json:"visionResult"`
-	Description  string   `json:"description"`
-	Links        []string `json:"links"`
+	Name        string     `json:"name"`
+	Goals       []goalReq  `json:"goals"`
+	Description string     `json:"description"`
+	Labels      []labelReq `json:"labels"`
+	Links       []string   `json:"links"`
 }
 
 type updateProjectReq struct {
-	Name         string   `json:"name"`
-	Goal         string   `json:"goal"`
-	Principles   string   `json:"principles"`
-	VisionResult string   `json:"visionResult"`
-	Description  string   `json:"description"`
-	Links        []string `json:"links"`
+	Name        string     `json:"name"`
+	Goals       []goalReq  `json:"goals"`
+	Description string     `json:"description"`
+	Labels      []labelReq `json:"labels"`
+	Links       []string   `json:"links"`
 }
 
 type setStatusReq struct {
@@ -105,19 +138,111 @@ type linkResp struct {
 	URL   string `json:"url"`
 }
 
+type labelResp struct {
+	Value      string `json:"value"`
+	Kind       string `json:"kind"`
+	Filterable bool   `json:"filterable"`
+}
+
+type goalResp struct {
+	Text        string     `json:"text"`
+	Completed   bool       `json:"completed"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	CompletedAt *time.Time `json:"completedAt,omitempty"`
+}
+
 type projectResp struct {
-	ID           string     `json:"id"`
-	Name         string     `json:"name"`
-	Goal         string     `json:"goal"`
-	Principles   string     `json:"principles"`
-	VisionResult string     `json:"visionResult"`
-	Description  string     `json:"description"`
-	Links        []linkResp `json:"links"`
-	Status       string     `json:"status"`
-	StartedAt    *time.Time `json:"startedAt,omitempty"`
-	CompletedAt  *time.Time `json:"completedAt,omitempty"`
-	CreatedAt    time.Time  `json:"createdAt"`
-	UpdatedAt    time.Time  `json:"updatedAt"`
+	ID          string      `json:"id"`
+	Name        string      `json:"name"`
+	Goals       []goalResp  `json:"goals"`
+	Description string      `json:"description"`
+	Labels      []labelResp `json:"labels"`
+	Links       []linkResp  `json:"links"`
+	Status      string      `json:"status"`
+	StartedAt   *time.Time  `json:"startedAt,omitempty"`
+	CompletedAt *time.Time  `json:"completedAt,omitempty"`
+	CreatedAt   time.Time   `json:"createdAt"`
+	UpdatedAt   time.Time   `json:"updatedAt"`
+}
+
+func toDomainLabels(labels []labelReq) []domain.Label {
+	if len(labels) == 0 {
+		return nil
+	}
+	out := make([]domain.Label, 0, len(labels))
+	for _, label := range labels {
+		value := strings.TrimSpace(label.Value)
+		if value == "" {
+			continue
+		}
+		kind := domain.LabelKindTag
+		filterable := false
+		if strings.HasPrefix(value, "@") {
+			kind = domain.LabelKindContext
+			filterable = true
+			value = strings.TrimSpace(strings.TrimPrefix(value, "@"))
+		} else if strings.HasPrefix(value, "#") {
+			kind = domain.LabelKindTag
+			filterable = true
+			value = strings.TrimSpace(strings.TrimPrefix(value, "#"))
+		}
+		if value == "" {
+			continue
+		}
+		out = append(out, domain.Label{Value: strings.ToLower(value), Kind: kind, Filterable: filterable})
+	}
+	return out
+}
+
+func toLabelResp(labels []domain.Label) []labelResp {
+	if len(labels) == 0 {
+		return []labelResp{}
+	}
+	out := make([]labelResp, 0, len(labels))
+	for _, label := range labels {
+		out = append(out, labelResp{Value: label.Value, Kind: string(label.Kind), Filterable: label.Filterable})
+	}
+	return out
+}
+
+func toDomainGoals(goals []goalReq) []domain.Goal {
+	if len(goals) == 0 {
+		return nil
+	}
+	out := make([]domain.Goal, 0, len(goals))
+	for _, goal := range goals {
+		value := strings.TrimSpace(goal.Text)
+		if value == "" {
+			continue
+		}
+		var createdAt time.Time
+		if goal.CreatedAt != nil {
+			createdAt = *goal.CreatedAt
+		}
+		out = append(out, domain.Goal{
+			Text:        value,
+			Completed:   goal.Completed,
+			CreatedAt:   createdAt,
+			CompletedAt: goal.CompletedAt,
+		})
+	}
+	return out
+}
+
+func toGoalResp(goals []domain.Goal) []goalResp {
+	if len(goals) == 0 {
+		return []goalResp{}
+	}
+	out := make([]goalResp, 0, len(goals))
+	for _, goal := range goals {
+		out = append(out, goalResp{
+			Text:        goal.Text,
+			Completed:   goal.Completed,
+			CreatedAt:   goal.CreatedAt,
+			CompletedAt: goal.CompletedAt,
+		})
+	}
+	return out
 }
 
 func toResp(p *domain.Project) projectResp {
@@ -128,10 +253,9 @@ func toResp(p *domain.Project) projectResp {
 	return projectResp{
 		ID:           p.ID,
 		Name:         p.Name,
-		Goal:         p.Goal,
-		Principles:   p.Principles,
-		VisionResult: p.VisionResult,
+		Goals:        toGoalResp(p.Goals),
 		Description:  p.Description,
+		Labels:       toLabelResp(p.Labels),
 		Links:        links,
 		Status:       string(p.Status),
 		StartedAt:    p.StartedAt,
@@ -161,12 +285,11 @@ func (h *Handler) Create(c context.Context, ctx *app.RequestContext) {
 		return
 	}
 	p, err := h.svc.Create(c, application.CreateProjectCmd{
-		Name:         req.Name,
-		Goal:         req.Goal,
-		Principles:   req.Principles,
-		VisionResult: req.VisionResult,
-		Description:  req.Description,
-		Links:        req.Links,
+		Name:        req.Name,
+		Goals:       toDomainGoals(req.Goals),
+		Description: req.Description,
+		Labels:      toDomainLabels(req.Labels),
+		Links:       req.Links,
 	})
 	if err != nil {
 		writeErr(ctx, err)
@@ -199,7 +322,12 @@ func (h *Handler) List(c context.Context, ctx *app.RequestContext) {
 		status = &s
 	}
 
-	q := domain.ListQuery{Status: status, Search: strings.TrimSpace(ctx.Query("search"))}
+	q := domain.ListQuery{
+		Status:   status,
+		Search:   strings.TrimSpace(ctx.Query("search")),
+		Contexts: splitCSV(ctx.Query("contexts")),
+		Tags:     splitCSV(ctx.Query("tags")),
+	}
 	sorts, err := parseProjectSort(ctx)
 	if err != nil {
 		writeErr(ctx, err)
@@ -234,12 +362,11 @@ func (h *Handler) Update(c context.Context, ctx *app.RequestContext) {
 		return
 	}
 	p, err := h.svc.Update(c, id, application.UpdateProjectCmd{
-		Name:         req.Name,
-		Goal:         req.Goal,
-		Principles:   req.Principles,
-		VisionResult: req.VisionResult,
-		Description:  req.Description,
-		Links:        req.Links,
+		Name:        req.Name,
+		Goals:       toDomainGoals(req.Goals),
+		Description: req.Description,
+		Labels:      toDomainLabels(req.Labels),
+		Links:       req.Links,
 	})
 	if err != nil {
 		writeErr(ctx, err)

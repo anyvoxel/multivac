@@ -47,11 +47,13 @@ type Sort struct {
 //
 // NOTE: Add new filter fields here without changing repository method signatures.
 type ListQuery struct {
-	Status *Status
-	Search string
-	Sorts  []Sort
-	Limit  int
-	Offset int
+	Status   *Status
+	Search   string
+	Contexts []string
+	Tags     []string
+	Sorts    []Sort
+	Limit    int
+	Offset   int
 }
 
 func (q *ListQuery) normalize() {

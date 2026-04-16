@@ -25,7 +25,7 @@ import {
   setProjectStatus,
   updateProject,
 } from "./lib/projects";
-import type { Project, ProjectStatus } from "./lib/projects";
+import type { Goal, Label, Project, ProjectStatus } from "./lib/projects";
 import {
   createTask,
   deleteTask,
@@ -97,6 +97,55 @@ type ProjectDrawerState = Project & {
   editingLinkValue: string;
   editingLinkInitialValue: string;
 };
+
+function parseLabelFilterInput(input: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const token of input.split(/\s+/)) {
+    const normalized = token.trim().toLowerCase();
+    if (!normalized) continue;
+    const value = normalized.startsWith("@") || normalized.startsWith("#") ? normalized.slice(1) : normalized;
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+
+
+function tokenToLabel(token: string): Label | null {
+  const raw = token.trim();
+  if (!raw) return null;
+  let value = raw;
+  let kind: Label["kind"] = "Tag";
+  let filterable = false;
+  if (raw.startsWith("@")) {
+    value = raw.slice(1).trim();
+    kind = "Context";
+    filterable = true;
+  } else if (raw.startsWith("#")) {
+    value = raw.slice(1).trim();
+    kind = "Tag";
+    filterable = true;
+  }
+  value = value.toLowerCase();
+  if (!value) return null;
+  return { value, kind, filterable };
+}
+
+function parseLabelsInput(input: string): Label[] {
+  const seen = new Set<string>();
+  const out: Label[] = [];
+  for (const token of input.split(/\s+/)) {
+    const label = tokenToLabel(token);
+    if (!label) continue;
+    const key = `${label.kind}:${label.value}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(label);
+  }
+  return out;
+}
 
 function formatProjectLinkInput(link: Pick<Project["links"][number], "label" | "url">): string {
   return link.label === link.url ? link.url : `[${link.label}](${link.url})`;
@@ -477,6 +526,8 @@ export default function App() {
   const [route, setRoute] = useState<Route>("projects");
 
   const [search, setSearch] = useState<string>("");
+  const [contextFilterInput, setContextFilterInput] = useState<string>("");
+  const [tagFilterInput, setTagFilterInput] = useState<string>("");
 
   // Projects list page state
   const [loading, setLoading] = useState(false);
@@ -557,6 +608,8 @@ export default function App() {
   });
 
   const normalizedSearch = search.trim();
+  const normalizedContexts = parseLabelFilterInput(contextFilterInput);
+  const normalizedTags = parseLabelFilterInput(tagFilterInput);
 
   function setDrawerInbox(next: Inbox | null) {
     drawerInboxRef.current = next;
@@ -597,6 +650,8 @@ export default function App() {
       const list = await listProjects({
         status: projectStatusFilter || undefined,
         search: normalizedSearch || undefined,
+        contexts: normalizedContexts.length ? normalizedContexts : undefined,
+        tags: normalizedTags.length ? normalizedTags : undefined,
         limit: projectPageSize + 1,
         offset: projectOffset,
       });
@@ -674,7 +729,13 @@ export default function App() {
     setScheduleError("");
     try {
       const [tasks, lists] = await Promise.all([
-        listTasks({ search: normalizedSearch || undefined, sortBy: "DueAt", sortDir: "Asc" }),
+        listTasks({
+          search: normalizedSearch || undefined,
+          contexts: normalizedContexts.length ? normalizedContexts : undefined,
+          tags: normalizedTags.length ? normalizedTags : undefined,
+          sortBy: "DueAt",
+          sortDir: "Asc",
+        }),
         listWaitingLists({ search: normalizedSearch || undefined, sortBy: "ExpectedAt", sortDir: "Asc" }),
       ]);
       setScheduleTasks(tasks);
@@ -688,7 +749,7 @@ export default function App() {
 
   useEffect(() => {
     setProjectOffset(0);
-  }, [projectStatusFilter, search, projectPageSize]);
+  }, [projectStatusFilter, search, contextFilterInput, tagFilterInput, projectPageSize]);
 
   useEffect(() => {
     setInboxOffset(0);
@@ -705,7 +766,7 @@ export default function App() {
   useEffect(() => {
     void refreshProjects();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectStatusFilter, projectOffset, projectPageSize, normalizedSearch]);
+  }, [projectStatusFilter, projectOffset, projectPageSize, normalizedSearch, contextFilterInput, tagFilterInput]);
 
   useEffect(() => {
     if (route !== "inboxes") return;
@@ -729,7 +790,7 @@ export default function App() {
     if (route !== "schedule") return;
     void refreshSchedule();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route, normalizedSearch]);
+  }, [route, normalizedSearch, contextFilterInput, tagFilterInput]);
 
   const pageLabelMap: Record<Route, string> = {
     projects: "项目管理",
@@ -755,10 +816,9 @@ export default function App() {
         setDrawerProject({
           id: "",
           name: "",
-          goal: "",
-          principles: "",
-          visionResult: "",
+          goals: [],
           description: "",
+          labels: [],
           links: [],
           linkInputs: [],
           editingLinkIndex: null,
@@ -810,6 +870,7 @@ export default function App() {
           projectId: defaultProject,
           name: "",
           description: "",
+          labels: [],
           context: "默认",
           details: "",
           status: "Todo",
@@ -1085,6 +1146,18 @@ export default function App() {
                     </button>
                   ) : null}
                 </div>
+                <input
+                  className="w-36 rounded-md border border-[#E6E8F0] bg-white px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#4F46E5]"
+                  placeholder="情境(@office)"
+                  value={contextFilterInput}
+                  onChange={(e) => setContextFilterInput(e.target.value)}
+                />
+                <input
+                  className="w-36 rounded-md border border-[#E6E8F0] bg-white px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#4F46E5]"
+                  placeholder="标签(#urgent)"
+                  value={tagFilterInput}
+                  onChange={(e) => setTagFilterInput(e.target.value)}
+                />
                 <button
                   className="flex items-center justify-center rounded-md border border-[#E6E8F0] bg-white p-2 text-[#6B7280] hover:bg-[#F5F6FA]"
                   type="button"
@@ -1159,6 +1232,8 @@ export default function App() {
                 projectId={taskProjectId}
                 status={taskStatusFilter}
                 search={normalizedSearch}
+                contextFilterInput={contextFilterInput}
+                tagFilterInput={tagFilterInput}
                 version={taskListVersion}
                 highlightTaskId={highlightTaskId}
                 onProjectId={setTaskProjectId}
@@ -1368,10 +1443,9 @@ export default function App() {
         if (drawer.mode === "create") {
           const p = await createProject({
             name: drawerProject.name,
-            goal: drawerProject.goal,
-            principles: drawerProject.principles,
-            visionResult: drawerProject.visionResult,
+            goals: drawerProject.goals,
             description: drawerProject.description,
+            labels: drawerProject.labels,
             links,
           });
           if (status !== "Draft") {
@@ -1385,10 +1459,9 @@ export default function App() {
         const current = await getProject(drawerProject.id);
         await updateProject(drawerProject.id, {
           name: drawerProject.name,
-          goal: drawerProject.goal,
-          principles: drawerProject.principles,
-          visionResult: drawerProject.visionResult,
+          goals: drawerProject.goals,
           description: drawerProject.description,
+          labels: drawerProject.labels,
           links,
         });
         if (current.status !== status) {
@@ -1408,6 +1481,7 @@ export default function App() {
             projectId: drawerTask.projectId || undefined,
             name: drawerTask.name,
             description: drawerTask.description,
+            labels: drawerTask.labels,
             context: drawerTask.context,
             details: drawerTask.details,
             priority: drawerTask.priority,
@@ -1424,6 +1498,7 @@ export default function App() {
           projectId: drawerTask.projectId || undefined,
           name: drawerTask.name,
           description: drawerTask.description,
+          labels: drawerTask.labels,
           context: drawerTask.context,
           details: drawerTask.details,
           priority: drawerTask.priority,
@@ -2545,6 +2620,8 @@ function TasksPageNew(props: {
   projectId: string;
   status: TaskStatus | "";
   search: string;
+  contextFilterInput: string;
+  tagFilterInput: string;
   version: number;
   highlightTaskId: string | null;
   onProjectId: (v: string) => void;
@@ -2641,6 +2718,8 @@ function TasksPageNew(props: {
         projectId: props.projectId || undefined,
         status: props.status || undefined,
         search: props.search || undefined,
+        contexts: parseLabelFilterInput(props.contextFilterInput),
+        tags: parseLabelFilterInput(props.tagFilterInput),
         sortBy: sortDir ? "DueAt" : undefined,
         sortDir: sortDir || undefined,
         limit: pageSize + 1,
@@ -2657,12 +2736,12 @@ function TasksPageNew(props: {
 
   useEffect(() => {
     setOffset(0);
-  }, [props.projectId, props.status, props.search, sortDir, pageSize]);
+  }, [props.projectId, props.status, props.search, props.contextFilterInput, props.tagFilterInput, sortDir, pageSize]);
 
   useEffect(() => {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.projectId, props.status, props.search, props.version, sortDir, offset, pageSize]);
+  }, [props.projectId, props.status, props.search, props.contextFilterInput, props.tagFilterInput, props.version, sortDir, offset, pageSize]);
 
   const projectNameById = useMemo(() => {
     return new Map(props.projects.map((p) => [p.id, p.name]));
@@ -3069,6 +3148,72 @@ function TextArea(
   );
 }
 
+function labelText(label: Label): string {
+  if (!label.filterable) return label.value;
+  return label.kind === "Context" ? `@${label.value}` : `#${label.value}`;
+}
+
+function LabelEditor(props: { labels: Label[]; onChange: (labels: Label[]) => void; placeholder?: string }) {
+  const [input, setInput] = useState("");
+
+  function addFromInput() {
+    const parsed = parseLabelsInput(input);
+    if (parsed.length === 0) {
+      setInput("");
+      return;
+    }
+    const existingKeys = new Set(props.labels.map((label) => `${label.kind}:${label.value}`));
+    const next = [...props.labels];
+    for (const label of parsed) {
+      const key = `${label.kind}:${label.value}`;
+      if (existingKeys.has(key)) continue;
+      next.push(label);
+      existingKeys.add(key);
+    }
+    props.onChange(next);
+    setInput("");
+  }
+
+  return (
+    <div className="grid gap-2">
+      <div className="flex flex-wrap gap-2">
+        {props.labels.map((label, index) => (
+          <div key={`${label.kind}-${label.value}-${index}`} className="flex items-center gap-2 rounded-full border border-[#E6E8F0] bg-white px-2 py-1 text-xs">
+            <span className="font-medium text-[#111827]">{labelText(label)}</span>
+            <button
+              type="button"
+              className="text-[#6B7280] hover:text-[#DC2626]"
+              onClick={() => props.onChange(props.labels.filter((_, i) => i !== index))}
+            >
+              ×
+            </button>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center gap-2">
+        <TextInput
+          value={input}
+          onChange={setInput}
+          placeholder={props.placeholder ?? "输入标签，空格分隔；支持 @context #tag"}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              addFromInput();
+            }
+          }}
+        />
+        <button
+          type="button"
+          className="rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm text-[#374151] hover:bg-[#F5F6FA]"
+          onClick={addFromInput}
+        >
+          添加
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ProjectMarkdownEditor(props: {
   value: string;
   onChange: (v: string) => void;
@@ -3157,16 +3302,68 @@ function ProjectDrawerForm(props: {
         </Field>
       </div>
       <Field label="目标">
-        <ProjectMarkdownEditor value={p.goal} onChange={(v) => props.onChange({ ...p, goal: v })} placeholder="输入目标" />
+        <div className="grid gap-2">
+          {p.goals.map((goal, index) => (
+            <div key={`${goal.createdAt}-${index}`} className="grid gap-1 rounded-md border border-[#E6E8F0] bg-white p-2">
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={goal.completed}
+                  onChange={(e) => {
+                    const now = new Date().toISOString();
+                    const goals = p.goals.map((item, i) =>
+                      i === index
+                        ? {
+                            ...item,
+                            completed: e.target.checked,
+                            completedAt: e.target.checked ? now : undefined,
+                          }
+                        : item,
+                    );
+                    props.onChange({ ...p, goals });
+                  }}
+                />
+                <input
+                  className="w-full rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm"
+                  value={goal.text}
+                  onChange={(e) => {
+                    const goals = p.goals.map((item, i) => (i === index ? { ...item, text: e.target.value.replace(/[\r\n]/g, "") } : item));
+                    props.onChange({ ...p, goals });
+                  }}
+                  placeholder="输入目标（单行）"
+                />
+                <button
+                  type="button"
+                  className="rounded-md border border-[#E6E8F0] bg-white px-2 py-1 text-xs text-[#6B7280] hover:bg-[#F5F6FA]"
+                  onClick={() => props.onChange({ ...p, goals: p.goals.filter((_, i) => i !== index) })}
+                >
+                  删除
+                </button>
+              </div>
+              <div className="text-xs text-[#6B7280]">
+                创建：{formatDateTime(goal.createdAt)}
+                {goal.completedAt ? ` · 完成：${formatDateTime(goal.completedAt)}` : ""}
+              </div>
+            </div>
+          ))}
+          <button
+            type="button"
+            className="w-fit rounded-md border border-[#E6E8F0] bg-white px-3 py-1.5 text-sm text-[#374151] hover:bg-[#F5F6FA]"
+            onClick={() => {
+              const now = new Date().toISOString();
+              const newGoal: Goal = { text: "", completed: false, createdAt: now };
+              props.onChange({ ...p, goals: [...p.goals, newGoal] });
+            }}
+          >
+            添加目标
+          </button>
+        </div>
       </Field>
-      <Field label="原则">
-        <ProjectMarkdownEditor value={p.principles} onChange={(v) => props.onChange({ ...p, principles: v })} placeholder="输入原则" />
+      <Field label="项目内容（Markdown）">
+        <ProjectMarkdownEditor value={p.description} onChange={(v) => props.onChange({ ...p, description: v })} placeholder="输入项目内容，可自行使用 Markdown 组织结构" />
       </Field>
-      <Field label="背景 & 结果">
-        <ProjectMarkdownEditor value={p.visionResult} onChange={(v) => props.onChange({ ...p, visionResult: v })} placeholder="输入背景与结果" />
-      </Field>
-      <Field label="详细描述">
-        <ProjectMarkdownEditor value={p.description} onChange={(v) => props.onChange({ ...p, description: v })} placeholder="输入详细描述" />
+      <Field label="标签（@=情境，#=标签，无前缀不可筛选）">
+        <LabelEditor labels={p.labels} onChange={(labels) => props.onChange({ ...p, labels })} placeholder="@office #urgent 想法" />
       </Field>
       <Field
         label={
@@ -3723,6 +3920,9 @@ function TaskDrawerForm(props: {
           rows={3}
           placeholder="可选"
         />
+      </Field>
+      <Field label="标签（@=情境，#=标签，无前缀不可筛选）">
+        <LabelEditor labels={t.labels} onChange={(labels) => props.onChange({ ...t, labels })} placeholder="@office #urgent 想法" />
       </Field>
 
       <Field label="情境分类">

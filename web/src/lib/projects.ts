@@ -5,13 +5,27 @@ export type ProjectLink = {
   url: string;
 };
 
+export type LabelKind = "Context" | "Tag";
+
+export type Label = {
+  value: string;
+  kind: LabelKind;
+  filterable: boolean;
+};
+
+export type Goal = {
+  text: string;
+  completed: boolean;
+  createdAt: string;
+  completedAt?: string;
+};
+
 export type Project = {
   id: string;
   name: string;
-  goal: string;
-  principles: string;
-  visionResult: string;
+  goals: Goal[];
   description: string;
+  labels: Label[];
   links: ProjectLink[];
   status: ProjectStatus;
   startedAt?: string;
@@ -22,10 +36,9 @@ export type Project = {
 
 export type CreateProjectInput = {
   name: string;
-  goal: string;
-  principles: string;
-  visionResult: string;
+  goals: Goal[];
   description: string;
+  labels: Label[];
   links: string[];
 };
 
@@ -34,6 +47,8 @@ export type UpdateProjectInput = CreateProjectInput;
 export type ListProjectsQuery = {
   status?: ProjectStatus;
   search?: string;
+  contexts?: string[];
+  tags?: string[];
   limit?: number;
   offset?: number;
 };
@@ -72,6 +87,8 @@ export async function listProjects(q?: ListProjectsQuery): Promise<Project[]> {
   const sp = new URLSearchParams();
   if (q?.status) sp.set("status", q.status);
   if (q?.search) sp.set("search", q.search);
+  if (q?.contexts?.length) sp.set("contexts", q.contexts.join(","));
+  if (q?.tags?.length) sp.set("tags", q.tags.join(","));
   if (q?.limit !== undefined) sp.set("limit", String(q.limit));
   if (q?.offset !== undefined) sp.set("offset", String(q.offset));
   const qs = sp.toString();

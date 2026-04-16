@@ -14,6 +14,30 @@ import (
 	"github.com/anyvoxel/multivac/pkg/item/domain"
 )
 
+func splitCSV(v string) []string {
+	if strings.TrimSpace(v) == "" {
+		return nil
+	}
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	seen := map[string]struct{}{}
+	for _, part := range parts {
+		normalized := strings.ToLower(strings.TrimSpace(part))
+		if normalized == "" {
+			continue
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func parseSortBy(v string) (domain.SortBy, bool) {
 	switch strings.ToLower(v) {
 	case "createdat", "created_at":
@@ -75,12 +99,17 @@ type Handler struct{ svc *application.Service }
 
 func NewHandler(svc *application.Service) *Handler { return &Handler{svc: svc} }
 
+type labelReq struct {
+	Value string `json:"value"`
+}
+
 type createItemReq struct {
 	Kind        string     `json:"kind"`
 	Bucket      string     `json:"bucket"`
 	ProjectID   *string    `json:"projectId,omitempty"`
 	Title       string     `json:"title"`
 	Description string     `json:"description"`
+	Labels      []labelReq `json:"labels"`
 	Context     string     `json:"context"`
 	Details     string     `json:"details"`
 	TaskStatus  string     `json:"taskStatus,omitempty"`
@@ -94,15 +123,22 @@ type updateBucketReq struct {
 	Bucket string `json:"bucket"`
 }
 
+type labelResp struct {
+	Value      string `json:"value"`
+	Kind       string `json:"kind"`
+	Filterable bool   `json:"filterable"`
+}
+
 type itemResp struct {
-	ID          string     `json:"id"`
-	Kind        string     `json:"kind"`
-	Bucket      string     `json:"bucket"`
-	ProjectID   string     `json:"projectId,omitempty"`
-	Title       string     `json:"title"`
-	Description string     `json:"description"`
-	Context     string     `json:"context"`
-	Details     string     `json:"details"`
+	ID          string      `json:"id"`
+	Kind        string      `json:"kind"`
+	Bucket      string      `json:"bucket"`
+	ProjectID   string      `json:"projectId,omitempty"`
+	Title       string      `json:"title"`
+	Description string      `json:"description"`
+	Labels      []labelResp `json:"labels"`
+	Context     string      `json:"context"`
+	Details     string      `json:"details"`
 	TaskStatus  string     `json:"taskStatus,omitempty"`
 	Priority    string     `json:"priority,omitempty"`
 	WaitingFor  string     `json:"waitingFor,omitempty"`
@@ -112,8 +148,48 @@ type itemResp struct {
 	UpdatedAt   time.Time  `json:"updatedAt"`
 }
 
+func toDomainLabels(labels []labelReq) []domain.Label {
+	if len(labels) == 0 {
+		return nil
+	}
+	out := make([]domain.Label, 0, len(labels))
+	for _, label := range labels {
+		value := strings.TrimSpace(label.Value)
+		if value == "" {
+			continue
+		}
+		kind := domain.LabelKindTag
+		filterable := false
+		if strings.HasPrefix(value, "@") {
+			kind = domain.LabelKindContext
+			filterable = true
+			value = strings.TrimSpace(strings.TrimPrefix(value, "@"))
+		} else if strings.HasPrefix(value, "#") {
+			kind = domain.LabelKindTag
+			filterable = true
+			value = strings.TrimSpace(strings.TrimPrefix(value, "#"))
+		}
+		if value == "" {
+			continue
+		}
+		out = append(out, domain.Label{Value: strings.ToLower(value), Kind: kind, Filterable: filterable})
+	}
+	return out
+}
+
+func toLabelResp(labels []domain.Label) []labelResp {
+	if len(labels) == 0 {
+		return []labelResp{}
+	}
+	out := make([]labelResp, 0, len(labels))
+	for _, label := range labels {
+		out = append(out, labelResp{Value: label.Value, Kind: string(label.Kind), Filterable: label.Filterable})
+	}
+	return out
+}
+
 func toResp(item *domain.Item) itemResp {
-	return itemResp{ID: item.ID, Kind: string(item.Kind), Bucket: string(item.Bucket), ProjectID: item.ProjectID, Title: item.Title, Description: item.Description, Context: item.Context, Details: item.Details, TaskStatus: item.TaskStatus, Priority: item.Priority, WaitingFor: item.WaitingFor, ExpectedAt: item.ExpectedAt, DueAt: item.DueAt, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
+	return itemResp{ID: item.ID, Kind: string(item.Kind), Bucket: string(item.Bucket), ProjectID: item.ProjectID, Title: item.Title, Description: item.Description, Labels: toLabelResp(item.Labels), Context: item.Context, Details: item.Details, TaskStatus: item.TaskStatus, Priority: item.Priority, WaitingFor: item.WaitingFor, ExpectedAt: item.ExpectedAt, DueAt: item.DueAt, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
 }
 
 func writeErr(ctx *app.RequestContext, err error) {
@@ -157,7 +233,7 @@ func toCreateCmd(req createItemReq) (application.CreateItemCmd, error) {
 	if req.ProjectID != nil {
 		projectID = strings.TrimSpace(*req.ProjectID)
 	}
-	return application.CreateItemCmd{Kind: kind, Bucket: bucket, ProjectID: projectID, Title: req.Title, Description: req.Description, Context: req.Context, Details: req.Details, TaskStatus: req.TaskStatus, Priority: req.Priority, WaitingFor: req.WaitingFor, ExpectedAt: req.ExpectedAt, DueAt: req.DueAt}, nil
+	return application.CreateItemCmd{Kind: kind, Bucket: bucket, ProjectID: projectID, Title: req.Title, Description: req.Description, Labels: toDomainLabels(req.Labels), Context: req.Context, Details: req.Details, TaskStatus: req.TaskStatus, Priority: req.Priority, WaitingFor: req.WaitingFor, ExpectedAt: req.ExpectedAt, DueAt: req.DueAt}, nil
 }
 
 func (h *Handler) Create(c context.Context, ctx *app.RequestContext) {
@@ -189,7 +265,13 @@ func (h *Handler) Get(c context.Context, ctx *app.RequestContext) {
 }
 
 func (h *Handler) List(c context.Context, ctx *app.RequestContext) {
-	q := domain.ListQuery{ProjectID: strings.TrimSpace(ctx.Query("projectId")), TaskStatus: strings.TrimSpace(ctx.Query("taskStatus")), Search: strings.TrimSpace(ctx.Query("search"))}
+	q := domain.ListQuery{
+		ProjectID:  strings.TrimSpace(ctx.Query("projectId")),
+		TaskStatus: strings.TrimSpace(ctx.Query("taskStatus")),
+		Search:     strings.TrimSpace(ctx.Query("search")),
+		Contexts:   splitCSV(ctx.Query("contexts")),
+		Tags:       splitCSV(ctx.Query("tags")),
+	}
 	if v := ctx.Query("bucket"); v != "" {
 		b, err := parseBucket(v)
 		if err != nil {

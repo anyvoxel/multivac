@@ -3,6 +3,8 @@ export type ItemBucket = "Inbox" | "NextAction" | "WaitingFor" | "SomedayMaybe" 
 export type SortDir = "Asc" | "Desc";
 export type ItemSortBy = "CreatedAt" | "UpdatedAt" | "Title" | "DueAt" | "ExpectedAt" | "Priority";
 
+import type { Label } from "./projects";
+
 export type Item = {
   id: string;
   kind: ItemKind;
@@ -10,6 +12,7 @@ export type Item = {
   projectId?: string;
   title: string;
   description: string;
+  labels: Label[];
   context: string;
   details: string;
   taskStatus?: string;
@@ -27,6 +30,8 @@ export type ListItemsQuery = {
   projectId?: string;
   taskStatus?: string;
   search?: string;
+  contexts?: string[];
+  tags?: string[];
   sortBy?: ItemSortBy;
   sortDir?: SortDir;
   limit?: number;
@@ -39,6 +44,7 @@ export type CreateItemInput = {
   projectId?: string;
   title: string;
   description: string;
+  labels: Label[];
   context: string;
   details: string;
   taskStatus?: string;
@@ -87,6 +93,8 @@ export async function listItems(q?: ListItemsQuery): Promise<Item[]> {
   if (q?.projectId) sp.set("projectId", q.projectId);
   if (q?.taskStatus) sp.set("taskStatus", q.taskStatus);
   if (q?.search) sp.set("search", q.search);
+  if (q?.contexts?.length) sp.set("contexts", q.contexts.join(","));
+  if (q?.tags?.length) sp.set("tags", q.tags.join(","));
   if (q?.sortBy) sp.set("sortBy", q.sortBy);
   if (q?.sortDir) sp.set("sortDir", q.sortDir);
   if (q?.limit !== undefined) sp.set("limit", String(q.limit));
