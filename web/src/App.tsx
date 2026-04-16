@@ -1220,18 +1220,55 @@ export default function App() {
           </main>
         </div>
 
-        {drawer.type !== "none" ? (
+        {drawer.type === "project" ? (
+          <CenteredDialog
+            title={drawer.mode === "create" ? "新建项目" : "项目详情"}
+            onClose={closeDrawer}
+            action={
+              <button
+                className={classNames(
+                  "rounded-md px-3 py-1.5 text-sm font-medium",
+                  drawerSaving
+                    ? "cursor-not-allowed bg-[#E5E7EB] text-[#9CA3AF]"
+                    : "bg-[#4F46E5] text-white hover:opacity-90",
+                )}
+                type="button"
+                disabled={drawerSaving}
+                onClick={() => void onSaveDrawer()}
+              >
+                保存
+              </button>
+            }
+          >
+            {drawerLoading ? (
+              <div className="px-6 py-8 text-sm text-[#6B7280]">加载中...</div>
+            ) : (
+              <ProjectDrawerForm
+                project={drawerProject}
+                mode={drawer.mode}
+                onChange={setDrawerProject}
+                onDelete={async () => {
+                  if (!drawerProject) return;
+                  await onDeleteProject(drawerProject);
+                }}
+                onGotoTasks={(pid) => {
+                  setTaskProjectId(pid);
+                  setRoute("tasks");
+                  closeDrawer();
+                }}
+              />
+            )}
+          </CenteredDialog>
+        ) : drawer.type !== "none" ? (
           <Drawer
             title={
-              drawer.type === "project"
-                ? "项目详情"
-                : drawer.type === "task"
-                  ? "任务详情"
-                  : drawer.type === "inbox"
-                    ? "收集箱详情"
-                    : drawer.type === "someday"
-                      ? "将来/也许详情"
-                      : "等待列表详情"
+              drawer.type === "task"
+                ? "任务详情"
+                : drawer.type === "inbox"
+                  ? "收集箱详情"
+                  : drawer.type === "someday"
+                    ? "将来/也许详情"
+                    : "等待列表详情"
             }
             onClose={closeDrawer}
             action={
@@ -1252,21 +1289,6 @@ export default function App() {
           >
             {drawerLoading ? (
               <div className="px-4 py-6 text-sm text-[#6B7280]">加载中...</div>
-            ) : drawer.type === "project" ? (
-              <ProjectDrawerForm
-                project={drawerProject}
-                mode={drawer.mode}
-                onChange={setDrawerProject}
-                onDelete={async () => {
-                  if (!drawerProject) return;
-                  await onDeleteProject(drawerProject);
-                }}
-                onGotoTasks={(pid) => {
-                  setTaskProjectId(pid);
-                  setRoute("tasks");
-                  closeDrawer();
-                }}
-              />
             ) : drawer.type === "task" ? (
               <TaskDrawerForm
                 task={drawerTask}
@@ -1356,7 +1378,7 @@ export default function App() {
             await setProjectStatus(p.id, status);
           }
           await refreshProjects();
-          await openProjectDrawer("edit", p.id);
+          closeDrawer();
           return;
         }
         // edit
@@ -2838,6 +2860,36 @@ function Drawer(props: { title: string; action: ReactNode; onClose: () => void; 
           </div>
         </div>
         <div className="h-[calc(100%-52px)] overflow-auto">{props.children}</div>
+      </div>
+    </div>
+  );
+}
+
+function CenteredDialog(props: {
+  title: string;
+  action: ReactNode;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4 py-8">
+      <div className="absolute inset-0" onClick={props.onClose} />
+      <div className="project-create-dialog relative flex max-h-full w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-[#E6E8F0] bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-[#E6E8F0] px-6 py-4">
+          <div className="text-base font-semibold text-[#111827]">{props.title}</div>
+          <div className="flex items-center gap-2">
+            {props.action}
+            <button
+              className="flex items-center justify-center rounded-md border border-[#E6E8F0] bg-white p-2 text-[#6B7280] hover:bg-[#F5F6FA]"
+              type="button"
+              onClick={props.onClose}
+              aria-label="close"
+            >
+              <IconClose />
+            </button>
+          </div>
+        </div>
+        <div className="project-create-dialog__body overflow-auto">{props.children}</div>
       </div>
     </div>
   );

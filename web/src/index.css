@@ -207,3 +207,11 @@
   margin-top: 0.75rem;
 }
 
+.project-create-dialog {
+  max-height: min(90vh, 960px);
+}
+
+.project-create-dialog__body {
+  max-height: calc(min(90vh, 960px) - 73px);
+}
+
