@@ -12,14 +12,14 @@ const (
 	StatusActive Status = "Active"
 	// StatusCompleted means the project is finished.
 	StatusCompleted Status = "Completed"
-	// StatusArchived means the project is no longer active.
-	StatusArchived Status = "Archived"
+	// StatusHold means the project is paused.
+	StatusHold Status = "Hold"
 )
 
 // Valid reports whether the status is one of the known values.
 func (s Status) Valid() bool {
 	switch s {
-	case StatusDraft, StatusActive, StatusCompleted, StatusArchived:
+	case StatusDraft, StatusActive, StatusCompleted, StatusHold:
 		return true
 	default:
 		return false
@@ -27,7 +27,6 @@ func (s Status) Valid() bool {
 }
 
 // ParseStatus parses a status string.
-// It accepts both canonical (CamelCase) and legacy (lowercase) values.
 func ParseStatus(v string) (Status, bool) {
 	switch strings.ToLower(v) {
 	case "draft":
@@ -36,8 +35,8 @@ func ParseStatus(v string) (Status, bool) {
 		return StatusActive, true
 	case "completed":
 		return StatusCompleted, true
-	case "archived":
-		return StatusArchived, true
+	case "hold":
+		return StatusHold, true
 	default:
 		return "", false
 	}

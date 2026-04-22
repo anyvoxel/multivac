@@ -14,17 +14,14 @@ func (d SortDir) valid() bool { return d == SortAsc || d == SortDesc }
 type SortBy string
 
 const (
-	ItemSortByCreatedAt  SortBy = "CreatedAt"
-	ItemSortByUpdatedAt  SortBy = "UpdatedAt"
-	ItemSortByTitle      SortBy = "Title"
-	ItemSortByDueAt      SortBy = "DueAt"
-	ItemSortByExpectedAt SortBy = "ExpectedAt"
-	ItemSortByPriority   SortBy = "Priority"
+	InboxSortByCreatedAt SortBy = "CreatedAt"
+	InboxSortByUpdatedAt SortBy = "UpdatedAt"
+	InboxSortByTitle     SortBy = "Title"
 )
 
 func (s SortBy) valid() bool {
 	switch s {
-	case ItemSortByCreatedAt, ItemSortByUpdatedAt, ItemSortByTitle, ItemSortByDueAt, ItemSortByExpectedAt, ItemSortByPriority:
+	case InboxSortByCreatedAt, InboxSortByUpdatedAt, InboxSortByTitle:
 		return true
 	default:
 		return false
@@ -37,16 +34,10 @@ type Sort struct {
 }
 
 type ListQuery struct {
-	Bucket     *Bucket
-	Kind       *Kind
-	ProjectID  string
-	TaskStatus string
-	Search     string
-	Contexts   []string
-	Tags       []string
-	Sorts      []Sort
-	Limit      int
-	Offset     int
+	Search string
+	Sorts  []Sort
+	Limit  int
+	Offset int
 }
 
 func (q *ListQuery) normalize() {
@@ -60,7 +51,7 @@ func (q *ListQuery) normalize() {
 		q.Offset = 0
 	}
 	if len(q.Sorts) == 0 {
-		q.Sorts = []Sort{{By: ItemSortByCreatedAt, Dir: SortDesc}}
+		q.Sorts = []Sort{{By: InboxSortByCreatedAt, Dir: SortDesc}}
 	}
 }
 
@@ -68,12 +59,6 @@ func (q *ListQuery) Validate() error {
 	q.normalize()
 	if q == nil {
 		return ErrInvalidArg
-	}
-	if q.Bucket != nil && !q.Bucket.Valid() {
-		return InvalidBucket(string(*q.Bucket))
-	}
-	if q.Kind != nil && !q.Kind.Valid() {
-		return InvalidKind(string(*q.Kind))
 	}
 	for _, s := range q.Sorts {
 		if !s.By.valid() {

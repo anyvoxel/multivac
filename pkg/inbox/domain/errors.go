@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	ErrNotFound   = errors.New("item not found")
+	ErrNotFound   = errors.New("inbox not found")
 	ErrInvalidArg = errors.New("invalid argument")
 )
 
@@ -43,7 +43,3 @@ func invalidFieldValueError(field, value string) error {
 func InvalidSortBy(value string) error                 { return invalidFieldValueError("sortBy", value) }
 func InvalidSortDir(value string) error                { return invalidFieldValueError("sortDir", value) }
 func InvalidPaginationValue(field, value string) error { return invalidFieldValueError(field, value) }
-func InvalidBucket(value string) error                 { return invalidFieldValueError("bucket", value) }
-func InvalidKind(value string) error                   { return invalidFieldValueError("kind", value) }
-func InvalidTaskStatus(value string) error             { return invalidFieldValueError("taskStatus", value) }
-func InvalidPriority(value string) error               { return invalidFieldValueError("priority", value) }

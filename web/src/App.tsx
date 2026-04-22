@@ -82,8 +82,15 @@ const PROJECT_STATUSES: ProjectStatus[] = [
   "Draft",
   "Active",
   "Completed",
-  "Archived",
+  "Hold",
 ];
+const PROJECT_CREATE_STATUSES: ProjectStatus[] = ["Draft", "Active", "Hold"];
+const PROJECT_STATUS_TRANSITIONS: Record<ProjectStatus, ProjectStatus[]> = {
+  Draft: ["Draft", "Active", "Hold"],
+  Active: ["Active", "Completed", "Hold"],
+  Hold: ["Hold", "Active"],
+  Completed: ["Completed"],
+};
 const TASK_STATUSES: TaskStatus[] = ["Todo", "InProgress", "Done", "Canceled"];
 const TASK_PRIORITIES: TaskPriority[] = ["P0", "High", "Medium", "Low"];
 const PAGE_SIZE_OPTIONS = [10, 20, 50];
@@ -91,12 +98,7 @@ const LAST_TASK_PROJECT_STORAGE_KEY = "multivac:last-task-project-id";
 const EMPTY_TASK_PROJECT_SENTINEL = "__NONE__";
 const SCHEDULE_WEEK_STARTS_ON = 0;
 
-type ProjectDrawerState = Project & {
-  linkInputs: string[];
-  editingLinkIndex: number | null;
-  editingLinkValue: string;
-  editingLinkInitialValue: string;
-};
+type ProjectDrawerState = Project;
 
 function parseLabelFilterInput(input: string): string[] {
   const seen = new Set<string>();
@@ -147,35 +149,45 @@ function parseLabelsInput(input: string): Label[] {
   return out;
 }
 
-function formatProjectLinkInput(link: Pick<Project["links"][number], "label" | "url">): string {
-  return link.label === link.url ? link.url : `[${link.label}](${link.url})`;
-}
-
-function normalizeProjectLinkInputs(inputs: string[]): string[] {
-  return inputs.map((line) => line.trim()).filter(Boolean);
-}
-
-function parseProjectLinkInput(input: string): { label: string; url: string } | null {
-  const value = input.trim();
-  if (!value) return null;
-  const match = value.match(/^\[(.+)\]\((https?:\/\/[^\s]+)\)$/);
-  if (match) {
-    return { label: match[1].trim(), url: match[2].trim() };
-  }
-  if (value.startsWith("http://") || value.startsWith("https://")) {
-    return { label: value, url: value };
-  }
-  return null;
-}
-
-function startProjectLinkEditing(p: ProjectDrawerState, index: number): ProjectDrawerState {
-  const value = p.linkInputs[index] ?? "";
+function createEmptyProjectGoal(): Goal {
   return {
-    ...p,
-    editingLinkIndex: index,
-    editingLinkValue: value,
-    editingLinkInitialValue: value,
+    title: "",
+    createdAt: new Date().toISOString(),
   };
+}
+
+function createEmptyProjectReference(): Project["references"][number] {
+  return {
+    title: "",
+    URL: "",
+  };
+}
+
+function createEmptyProject(): ProjectDrawerState {
+  const now = new Date().toISOString();
+  return {
+    id: "",
+    title: "",
+    goals: [],
+    description: "",
+    references: [],
+    status: "Draft",
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function allowedProjectStatuses(project: ProjectDrawerState, mode: "create" | "edit"): ProjectStatus[] {
+  return mode === "create" ? PROJECT_CREATE_STATUSES : PROJECT_STATUS_TRANSITIONS[project.status] ?? PROJECT_STATUSES;
+}
+
+function isProjectReferenceUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function classNames(...parts: Array<string | false | null | undefined>) {
@@ -190,8 +202,8 @@ function projectStatusLabel(s: ProjectStatus): string {
       return "进行中";
     case "Completed":
       return "已完成";
-    case "Archived":
-      return "归档";
+    case "Hold":
+      return "暂停";
     default:
       return s;
   }
@@ -650,8 +662,6 @@ export default function App() {
       const list = await listProjects({
         status: projectStatusFilter || undefined,
         search: normalizedSearch || undefined,
-        contexts: normalizedContexts.length ? normalizedContexts : undefined,
-        tags: normalizedTags.length ? normalizedTags : undefined,
         limit: projectPageSize + 1,
         offset: projectOffset,
       });
@@ -766,7 +776,7 @@ export default function App() {
   useEffect(() => {
     void refreshProjects();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectStatusFilter, projectOffset, projectPageSize, normalizedSearch, contextFilterInput, tagFilterInput]);
+  }, [projectStatusFilter, projectOffset, projectPageSize, normalizedSearch]);
 
   useEffect(() => {
     if (route !== "inboxes") return;
@@ -813,33 +823,13 @@ export default function App() {
     try {
       if (mode === "create") {
         setDrawer({ type: "project", mode: "create" });
-        setDrawerProject({
-          id: "",
-          name: "",
-          goals: [],
-          description: "",
-          labels: [],
-          links: [],
-          linkInputs: [],
-          editingLinkIndex: null,
-          editingLinkValue: "",
-          editingLinkInitialValue: "",
-          status: "Draft",
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        });
+        setDrawerProject(createEmptyProject());
         return;
       }
       if (!id) return;
       setDrawer({ type: "project", mode: "edit", id });
       const p = await getProject(id);
-      setDrawerProject({
-        ...p,
-        linkInputs: p.links.map((link) => formatProjectLinkInput(link)),
-        editingLinkIndex: null,
-        editingLinkValue: "",
-        editingLinkInitialValue: "",
-      });
+      setDrawerProject(p);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -1003,7 +993,7 @@ export default function App() {
   }
 
   async function onDeleteProject(p: Project) {
-    if (!confirm(`确定删除 Project: ${p.name} ?`)) return;
+    if (!confirm(`确定删除 Project: ${p.title} ?`)) return;
     setLoading(true);
     setError("");
     try {
@@ -1017,6 +1007,23 @@ export default function App() {
       setError(String(e));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function onDeleteInbox(inbox: Inbox) {
+    if (!confirm(`确定删除收集箱: ${inbox.name} ?`)) return;
+    setInboxLoading(true);
+    setInboxError("");
+    try {
+      await deleteInbox(inbox.id);
+      if (drawer.type === "inbox" && drawer.mode === "edit" && drawer.id === inbox.id) {
+        closeDrawer();
+      }
+      await refreshInboxes();
+    } catch (e) {
+      setInboxError(String(e));
+    } finally {
+      setInboxLoading(false);
     }
   }
 
@@ -1252,6 +1259,7 @@ export default function App() {
                 onNextPage={() => setInboxOffset((v) => v + inboxPageSize)}
                 onRefresh={() => void refreshInboxes()}
                 onOpen={(id, inbox) => void openInboxDrawer("edit", id, inbox)}
+                onDelete={(inbox) => void onDeleteInbox(inbox)}
               />
             ) : route === "schedule" ? (
               <SchedulePage
@@ -1295,9 +1303,17 @@ export default function App() {
           </main>
         </div>
 
-        {drawer.type === "project" ? (
+        {drawer.type === "project" || drawer.type === "inbox" ? (
           <CenteredDialog
-            title={drawer.mode === "create" ? "新建项目" : "项目详情"}
+            title={
+              drawer.type === "project"
+                ? drawer.mode === "create"
+                  ? "新建项目"
+                  : "项目详情"
+                : drawer.mode === "create"
+                  ? "新建收集箱"
+                  : "修改收集箱"
+            }
             onClose={closeDrawer}
             action={
               <button
@@ -1317,7 +1333,7 @@ export default function App() {
           >
             {drawerLoading ? (
               <div className="px-6 py-8 text-sm text-[#6B7280]">加载中...</div>
-            ) : (
+            ) : drawer.type === "project" ? (
               <ProjectDrawerForm
                 project={drawerProject}
                 mode={drawer.mode}
@@ -1332,19 +1348,21 @@ export default function App() {
                   closeDrawer();
                 }}
               />
+            ) : (
+              <InboxDrawerForm
+                inbox={drawerInbox}
+                mode={drawer.mode}
+                onChange={setDrawerInbox}
+                onDelete={async () => {
+                  if (!drawerInbox) return;
+                  await onDeleteInbox(drawerInbox);
+                }}
+              />
             )}
           </CenteredDialog>
         ) : drawer.type !== "none" ? (
           <Drawer
-            title={
-              drawer.type === "task"
-                ? "任务详情"
-                : drawer.type === "inbox"
-                  ? "收集箱详情"
-                  : drawer.type === "someday"
-                    ? "将来/也许详情"
-                    : "等待列表详情"
-            }
+            title={drawer.type === "task" ? "任务详情" : drawer.type === "someday" ? "将来/也许详情" : "等待列表详情"}
             onClose={closeDrawer}
             action={
               <button
@@ -1377,20 +1395,6 @@ export default function App() {
                   setTaskListVersion((v) => v + 1);
                   setDrawer({ type: "none" });
                   setDrawerTask(null);
-                }}
-              />
-            ) : drawer.type === "inbox" ? (
-              <InboxDrawerForm
-                inbox={drawerInbox}
-                mode={drawer.mode}
-                onChange={setDrawerInbox}
-                onDelete={async () => {
-                  if (!drawerInbox) return;
-                  if (!confirm(`确定删除收集箱: ${drawerInbox.name} ?`)) return;
-                  await deleteInbox(drawerInbox.id);
-                  await refreshInboxes();
-                  setDrawer({ type: "none" });
-                  setDrawerInbox(null);
                 }}
               />
             ) : drawer.type === "someday" ? (
@@ -1439,15 +1443,36 @@ export default function App() {
       if (drawer.type === "project") {
         if (!drawerProject) return;
         const status = drawerProject.status;
-        const links = normalizeProjectLinkInputs(drawerProject.linkInputs);
+        const title = drawerProject.title.trim();
+        const description = drawerProject.description.trim();
+        if (!title) throw new Error("项目名称不能为空");
+        if (!description) throw new Error("项目内容不能为空");
+
+        const references = drawerProject.references
+          .map((reference) => ({ title: reference.title.trim(), URL: reference.URL.trim() }))
+          .filter((reference) => reference.title || reference.URL);
+
+        for (const reference of references) {
+          if (!reference.title || !reference.URL) {
+            throw new Error("资料链接的标题和 URL 需要同时填写");
+          }
+          if (!isProjectReferenceUrl(reference.URL)) {
+            throw new Error("资料链接必须以 http:// 或 https:// 开头");
+          }
+        }
+
+        const payload = {
+          title,
+          goals: drawerProject.goals.map((goal) => ({
+            title: goal.title.replace(/[\r\n]/g, "").trim(),
+            createdAt: goal.createdAt,
+            completedAt: goal.completedAt,
+          })),
+          description,
+          references,
+        };
         if (drawer.mode === "create") {
-          const p = await createProject({
-            name: drawerProject.name,
-            goals: drawerProject.goals,
-            description: drawerProject.description,
-            labels: drawerProject.labels,
-            links,
-          });
+          const p = await createProject(payload);
           if (status !== "Draft") {
             await setProjectStatus(p.id, status);
           }
@@ -1455,15 +1480,8 @@ export default function App() {
           closeDrawer();
           return;
         }
-        // edit
         const current = await getProject(drawerProject.id);
-        await updateProject(drawerProject.id, {
-          name: drawerProject.name,
-          goals: drawerProject.goals,
-          description: drawerProject.description,
-          labels: drawerProject.labels,
-          links,
-        });
+        await updateProject(drawerProject.id, payload);
         if (current.status !== status) {
           await setProjectStatus(drawerProject.id, status);
         }
@@ -1690,7 +1708,7 @@ const MIN_TASK_COLUMN_WIDTHS: TaskColumnWidths = {
   actions: 100,
 };
 
-type InboxColumnKey = "name" | "description" | "updatedAt" | "actions";
+type InboxColumnKey = "name" | "createdAt" | "updatedAt" | "actions";
 
 type InboxColumnWidths = Record<InboxColumnKey, number>;
 
@@ -1701,19 +1719,19 @@ type InboxResizeState = {
 } | null;
 
 const DEFAULT_INBOX_COLUMN_WIDTHS: InboxColumnWidths = {
-  name: 260,
-  description: 360,
+  name: 420,
+  createdAt: 180,
   updatedAt: 180,
-  actions: 120,
+  actions: 140,
 };
 
 const INBOX_COLUMN_WIDTHS_STORAGE_KEY = "multivac:inbox-column-widths";
 
 const MIN_INBOX_COLUMN_WIDTHS: InboxColumnWidths = {
-  name: 180,
-  description: 220,
+  name: 240,
+  createdAt: 140,
   updatedAt: 140,
-  actions: 100,
+  actions: 120,
 };
 
 type SomedayColumnKey = "name" | "description" | "updatedAt" | "actions";
@@ -1820,7 +1838,7 @@ function normalizeInboxColumnWidths(value: unknown): InboxColumnWidths {
   const widths = typeof value === "object" && value !== null ? value as Partial<Record<InboxColumnKey, unknown>> : {};
   return {
     name: typeof widths.name === "number" ? Math.max(MIN_INBOX_COLUMN_WIDTHS.name, widths.name) : DEFAULT_INBOX_COLUMN_WIDTHS.name,
-    description: typeof widths.description === "number" ? Math.max(MIN_INBOX_COLUMN_WIDTHS.description, widths.description) : DEFAULT_INBOX_COLUMN_WIDTHS.description,
+    createdAt: typeof widths.createdAt === "number" ? Math.max(MIN_INBOX_COLUMN_WIDTHS.createdAt, widths.createdAt) : DEFAULT_INBOX_COLUMN_WIDTHS.createdAt,
     updatedAt: typeof widths.updatedAt === "number" ? Math.max(MIN_INBOX_COLUMN_WIDTHS.updatedAt, widths.updatedAt) : DEFAULT_INBOX_COLUMN_WIDTHS.updatedAt,
     actions: typeof widths.actions === "number" ? Math.max(MIN_INBOX_COLUMN_WIDTHS.actions, widths.actions) : DEFAULT_INBOX_COLUMN_WIDTHS.actions,
   };
@@ -2009,12 +2027,12 @@ function ProjectsPage(props: {
                     className="font-medium text-[#111827] hover:underline"
                     onClick={() => props.onOpen(p.id)}
                   >
-                    {p.name}
+                    {p.title}
                   </button>
                 </td>
                 <td className="px-4 py-3">
-                  <Badge color={p.status === "Active" ? "indigo" : p.status === "Completed" ? "green" : p.status === "Archived" ? "gray" : "gray"}>
-                    <span className={classNames("h-2 w-2 rounded-full", p.status === "Active" ? "bg-[#4F46E5]" : p.status === "Completed" ? "bg-[#10B981]" : "bg-[#9CA3AF]")} />
+                  <Badge color={p.status === "Active" ? "indigo" : p.status === "Completed" ? "green" : p.status === "Hold" ? "amber" : "gray"}>
+                    <span className={classNames("h-2 w-2 rounded-full", p.status === "Active" ? "bg-[#4F46E5]" : p.status === "Completed" ? "bg-[#10B981]" : p.status === "Hold" ? "bg-[#D97706]" : "bg-[#9CA3AF]")} />
                     {projectStatusLabel(p.status)}
                   </Badge>
                 </td>
@@ -2087,6 +2105,7 @@ function InboxesPage(props: {
   onNextPage: () => void;
   onRefresh: () => void;
   onOpen: (id: string, inbox?: Inbox) => void;
+  onDelete: (inbox: Inbox) => void;
 }) {
   const [columnWidths, setColumnWidths] = useState<InboxColumnWidths>(() => loadInboxColumnWidths());
 
@@ -2158,17 +2177,17 @@ function InboxesPage(props: {
       </div>
 
       <div className="overflow-x-auto overflow-y-hidden rounded-lg border border-[#E6E8F0] bg-white">
-        <table className="w-full min-w-[920px] table-fixed text-left text-sm">
+        <table className="w-full min-w-[900px] table-fixed text-left text-sm">
           <colgroup>
             <col style={{ width: columnWidths.name }} />
-            <col style={{ width: columnWidths.description }} />
+            <col style={{ width: columnWidths.createdAt }} />
             <col style={{ width: columnWidths.updatedAt }} />
             <col style={{ width: columnWidths.actions }} />
           </colgroup>
           <thead className="bg-[#F9FAFB] text-xs text-[#6B7280]">
             <tr>
               {headerCell("名称", "name")}
-              {headerCell("详细描述", "description")}
+              {headerCell("创建时间", "createdAt")}
               {headerCell("更新时间", "updatedAt")}
               {headerCell("操作", "actions", true)}
             </tr>
@@ -2186,18 +2205,33 @@ function InboxesPage(props: {
                 <td className="px-4 py-3">
                   <div className="font-medium text-[#111827]">{inbox.name}</div>
                 </td>
-                <td className="px-4 py-3 text-[#6B7280]">
-                  <div className="line-clamp-2 break-words">{inbox.description || "-"}</div>
-                </td>
+                <td className="px-4 py-3 text-[#6B7280]">{formatDate(inbox.createdAt)}</td>
                 <td className="px-4 py-3 text-[#6B7280]">{formatDate(inbox.updatedAt)}</td>
                 <td className="px-4 py-3 text-right">
-                  <button
-                    type="button"
-                    className="text-sm font-medium text-[#4F46E5] hover:underline"
-                    onClick={() => props.onOpen(inbox.id, inbox)}
-                  >
-                    详情 →
-                  </button>
+                  <div className="flex items-center justify-end gap-3 text-sm font-medium">
+                    <button
+                      type="button"
+                      className="text-[#4F46E5] hover:underline"
+                      onClick={() => props.onOpen(inbox.id, inbox)}
+                    >
+                      修改
+                    </button>
+                    <button
+                      type="button"
+                      className="text-[#DC2626] hover:underline"
+                      onClick={() => props.onDelete(inbox)}
+                    >
+                      删除
+                    </button>
+                    <button
+                      type="button"
+                      className="cursor-not-allowed text-[#9CA3AF]"
+                      disabled
+                      title="暂未实现"
+                    >
+                      澄清
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -2437,7 +2471,7 @@ function SchedulePage(props: {
     [weekAnchor],
   );
   const projectNameById = useMemo(() => {
-    return new Map(props.projects.map((project) => [project.id, project.name]));
+    return new Map(props.projects.map((project) => [project.id, project.title]));
   }, [props.projects]);
 
   const dueSoonToday = useMemo(
@@ -2744,7 +2778,7 @@ function TasksPageNew(props: {
   }, [props.projectId, props.status, props.search, props.contextFilterInput, props.tagFilterInput, props.version, sortDir, offset, pageSize]);
 
   const projectNameById = useMemo(() => {
-    return new Map(props.projects.map((p) => [p.id, p.name]));
+    return new Map(props.projects.map((p) => [p.id, p.title]));
   }, [props.projects]);
 
   useEffect(() => {
@@ -2769,7 +2803,7 @@ function TasksPageNew(props: {
             <option value="">全部项目</option>
             {props.projects.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.name}
+                {p.title}
               </option>
             ))}
           </select>
@@ -2953,7 +2987,7 @@ function CenteredDialog(props: {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4 py-8">
       <div className="absolute inset-0" onClick={props.onClose} />
-      <div className="project-create-dialog relative flex max-h-full w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-[#E6E8F0] bg-white shadow-2xl">
+      <div className="project-create-dialog relative flex max-h-full w-full max-w-5xl flex-col rounded-2xl border border-[#E6E8F0] bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-[#E6E8F0] px-6 py-4">
           <div className="text-base font-semibold text-[#111827]">{props.title}</div>
           <div className="flex items-center gap-2">
@@ -2968,7 +3002,7 @@ function CenteredDialog(props: {
             </button>
           </div>
         </div>
-        <div className="project-create-dialog__body overflow-auto">{props.children}</div>
+        <div className="project-create-dialog__body overflow-x-visible overflow-y-auto">{props.children}</div>
       </div>
     </div>
   );
@@ -3019,11 +3053,11 @@ function SearchableProjectSelect(props: {
   const filteredProjects = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return props.projects;
-    return props.projects.filter((p) => p.name.toLowerCase().includes(q));
+    return props.projects.filter((p) => p.title.toLowerCase().includes(q));
   }, [props.projects, query]);
 
   const options = useMemo(() => {
-    return [{ id: "", name: "不选择项目" }, ...filteredProjects];
+    return [{ id: "", title: "不选择项目" }, ...filteredProjects];
   }, [filteredProjects]);
 
   useEffect(() => {
@@ -3059,7 +3093,7 @@ function SearchableProjectSelect(props: {
     <div className="relative grid gap-2">
       <input
         className="w-full rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm text-[#111827] outline-none focus:ring-2 focus:ring-[#4F46E5]"
-        value={open ? query : selectedProject?.name ?? ""}
+        value={open ? query : selectedProject?.title ?? ""}
         placeholder="搜索项目..."
         onFocus={() => setOpen(true)}
         onBlur={() => {
@@ -3114,7 +3148,7 @@ function SearchableProjectSelect(props: {
                 onMouseEnter={() => setActiveIndex(index)}
                 onClick={() => selectOption(index)}
               >
-                {renderHighlightedName(option.name)}
+                {renderHighlightedName(option.title)}
               </button>
             ))
           )}
@@ -3214,10 +3248,11 @@ function LabelEditor(props: { labels: Label[]; onChange: (labels: Label[]) => vo
   );
 }
 
-function ProjectMarkdownEditor(props: {
+function MarkdownEditor(props: {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
+  contentClassName?: string;
 }) {
   const ref = useRef<MDXEditorMethods>(null);
   const valueRef = useRef(props.value);
@@ -3236,7 +3271,7 @@ function ProjectMarkdownEditor(props: {
         markdown={props.value}
         placeholder={props.placeholder}
         className="project-md-editor__root"
-        contentEditableClassName="project-md-editor__content markdown-preview"
+        contentEditableClassName={classNames("project-md-editor__content markdown-preview", props.contentClassName)}
         onChange={(markdown, initialMarkdownNormalize) => {
           valueRef.current = markdown;
           if (initialMarkdownNormalize) return;
@@ -3274,10 +3309,13 @@ function ProjectDrawerForm(props: {
 }) {
   const p = props.project;
   if (!p) return <div className="px-4 py-6 text-sm text-[#6B7280]">无数据</div>;
+
+  const availableStatuses = allowedProjectStatuses(p, props.mode);
+
   return (
     <div className="grid gap-3 px-4 py-4">
       <Field label="项目名称">
-        <TextInput value={p.name} onChange={(v) => props.onChange({ ...p, name: v })} />
+        <TextInput value={p.title} onChange={(v) => props.onChange({ ...p, title: v })} />
       </Field>
       <div className="grid grid-cols-2 gap-3">
         <Field label="状态">
@@ -3285,8 +3323,9 @@ function ProjectDrawerForm(props: {
             className="w-full rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm"
             value={p.status}
             onChange={(e) => props.onChange({ ...p, status: e.target.value as ProjectStatus })}
+            disabled={props.mode === "edit" && availableStatuses.length === 1}
           >
-            {PROJECT_STATUSES.map((s) => (
+            {availableStatuses.map((s) => (
               <option key={s} value={s}>
                 {projectStatusLabel(s)}
               </option>
@@ -3308,14 +3347,13 @@ function ProjectDrawerForm(props: {
               <div className="flex items-center gap-2">
                 <input
                   type="checkbox"
-                  checked={goal.completed}
+                  checked={Boolean(goal.completedAt)}
                   onChange={(e) => {
                     const now = new Date().toISOString();
                     const goals = p.goals.map((item, i) =>
                       i === index
                         ? {
                             ...item,
-                            completed: e.target.checked,
                             completedAt: e.target.checked ? now : undefined,
                           }
                         : item,
@@ -3325,9 +3363,11 @@ function ProjectDrawerForm(props: {
                 />
                 <input
                   className="w-full rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm"
-                  value={goal.text}
+                  value={goal.title}
                   onChange={(e) => {
-                    const goals = p.goals.map((item, i) => (i === index ? { ...item, text: e.target.value.replace(/[\r\n]/g, "") } : item));
+                    const goals = p.goals.map((item, i) =>
+                      i === index ? { ...item, title: e.target.value.replace(/[\r\n]/g, "") } : item,
+                    );
                     props.onChange({ ...p, goals });
                   }}
                   placeholder="输入目标（单行）"
@@ -3350,9 +3390,7 @@ function ProjectDrawerForm(props: {
             type="button"
             className="w-fit rounded-md border border-[#E6E8F0] bg-white px-3 py-1.5 text-sm text-[#374151] hover:bg-[#F5F6FA]"
             onClick={() => {
-              const now = new Date().toISOString();
-              const newGoal: Goal = { text: "", completed: false, createdAt: now };
-              props.onChange({ ...p, goals: [...p.goals, newGoal] });
+              props.onChange({ ...p, goals: [...p.goals, createEmptyProjectGoal()] });
             }}
           >
             添加目标
@@ -3360,10 +3398,7 @@ function ProjectDrawerForm(props: {
         </div>
       </Field>
       <Field label="项目内容（Markdown）">
-        <ProjectMarkdownEditor value={p.description} onChange={(v) => props.onChange({ ...p, description: v })} placeholder="输入项目内容，可自行使用 Markdown 组织结构" />
-      </Field>
-      <Field label="标签（@=情境，#=标签，无前缀不可筛选）">
-        <LabelEditor labels={p.labels} onChange={(labels) => props.onChange({ ...p, labels })} placeholder="@office #urgent 想法" />
+        <MarkdownEditor value={p.description} onChange={(v) => props.onChange({ ...p, description: v })} placeholder="输入项目内容，可自行使用 Markdown 组织结构" />
       </Field>
       <Field
         label={
@@ -3372,14 +3407,7 @@ function ProjectDrawerForm(props: {
             <button
               className="rounded-md border border-[#E6E8F0] bg-white px-3 py-1.5 text-sm font-medium text-[#4F46E5] hover:bg-[#F5F6FA]"
               type="button"
-              onClick={() =>
-                props.onChange({
-                  ...p,
-                  editingLinkIndex: p.linkInputs.length,
-                  editingLinkValue: "",
-                  editingLinkInitialValue: "",
-                })
-              }
+              onClick={() => props.onChange({ ...p, references: [...p.references, createEmptyProjectReference()] })}
             >
               添加链接
             </button>
@@ -3387,134 +3415,48 @@ function ProjectDrawerForm(props: {
         }
       >
         <div className="grid gap-2">
-          {p.linkInputs.length || p.editingLinkIndex !== null ? (
-            <div className="grid gap-2 pt-1">
-              {p.linkInputs.map((input, index) => {
-                if (p.editingLinkIndex === index) {
-                  return (
-                    <div key={`editing-${index}`} className="rounded-md border border-[#E6E8F0] bg-white px-3 py-2">
-                      <div className="flex items-center gap-2">
-                        <input
-                          className="min-w-0 flex-1 border-0 bg-transparent p-0 text-sm text-[#111827] outline-none placeholder:text-[#9CA3AF]"
-                          value={p.editingLinkValue}
-                          onChange={(e) => props.onChange({ ...p, editingLinkValue: e.target.value })}
-                          placeholder="支持 URL 或 [标题](https://example.com)"
-                          autoFocus
-                        />
-                        <button
-                          className="text-sm text-[#4F46E5] hover:underline"
-                          type="button"
-                          onClick={() => {
-                            const value = p.editingLinkValue.trim();
-                            if (!value) {
-                              const next = p.linkInputs.filter((_, i) => i !== index);
-                              props.onChange({
-                                ...p,
-                                linkInputs: next,
-                                editingLinkIndex: null,
-                                editingLinkValue: "",
-                                editingLinkInitialValue: "",
-                              });
-                              return;
-                            }
-                            const next = [...p.linkInputs];
-                            next[index] = value;
-                            props.onChange({
-                              ...p,
-                              linkInputs: next,
-                              editingLinkIndex: null,
-                              editingLinkValue: "",
-                              editingLinkInitialValue: "",
-                            });
-                          }}
-                        >
-                          确定
-                        </button>
-                        <button
-                          className="text-sm text-[#6B7280] hover:underline"
-                          type="button"
-                          onClick={() => {
-                            props.onChange({
-                              ...p,
-                              linkInputs:
-                                p.editingLinkInitialValue.trim() === ""
-                                  ? p.linkInputs.filter((_, i) => i !== index)
-                                  : p.linkInputs,
-                              editingLinkIndex: null,
-                              editingLinkValue: "",
-                              editingLinkInitialValue: "",
-                            });
-                          }}
-                        >
-                          取消
-                        </button>
-                      </div>
-                    </div>
-                  );
-                }
-                const parsed = parseProjectLinkInput(input);
-                const displayText = parsed ? (parsed.label !== parsed.url ? parsed.label : parsed.url) : input.trim();
-                return (
-                  <div key={`preview-${index}`} className="flex items-center justify-between gap-3 rounded-md border border-[#E6E8F0] bg-white px-3 py-2">
-                    {parsed ? (
-                      <div className="group relative min-w-0 flex-1">
-                        <a
-                          className="block min-w-0 truncate text-sm text-[#111827] hover:text-[#4F46E5] hover:underline"
-                          href={parsed.url}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {displayText}
-                        </a>
-                        {parsed.label !== parsed.url ? (
-                          <div className="pointer-events-none absolute left-0 top-full z-10 mt-1 hidden max-w-[320px] break-all rounded-md bg-[#111827] px-2 py-1 text-xs text-white shadow-lg group-hover:block">
-                            {parsed.url}
-                          </div>
-                        ) : null}
-                      </div>
-                    ) : (
-                      <div className="min-w-0 truncate text-sm text-[#B91C1C]" title="请输入合法的 URL 或 markdown 链接">
-                        {displayText}
-                      </div>
-                    )}
-                    <div className="flex items-center gap-3 text-sm">
-                      <button
-                        className="text-[#4F46E5] hover:underline"
-                        type="button"
-                        onClick={() => props.onChange(startProjectLinkEditing(p, index))}
-                      >
-                        编辑
-                      </button>
-                      <button
-                        className="text-[#DC2626] hover:underline"
-                        type="button"
-                        onClick={() => {
-                          const next = p.linkInputs.filter((_, i) => i !== index);
-                          const editingLinkIndex =
-                            p.editingLinkIndex === null
-                              ? null
-                              : p.editingLinkIndex === index
-                                ? null
-                                : p.editingLinkIndex > index
-                                  ? p.editingLinkIndex - 1
-                                  : p.editingLinkIndex;
-                          props.onChange({
-                            ...p,
-                            linkInputs: next,
-                            editingLinkIndex,
-                            editingLinkValue: editingLinkIndex === null ? "" : p.editingLinkValue,
-                            editingLinkInitialValue: editingLinkIndex === null ? "" : p.editingLinkInitialValue,
-                          });
-                        }}
-                      >
-                        移除
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : null}
+          {p.references.length === 0 ? <div className="text-sm text-[#9CA3AF]">暂无链接</div> : null}
+          {p.references.map((reference, index) => {
+            const title = reference.title.trim();
+            const url = reference.URL.trim();
+            const hasPartialValue = Boolean(title || url);
+            const hasValidPair = Boolean(title && url);
+            const hasValidUrl = !url || isProjectReferenceUrl(url);
+            return (
+              <div key={`${index}-${reference.title}-${reference.URL}`} className="grid gap-2 rounded-md border border-[#E6E8F0] bg-white p-3">
+                <div className="grid gap-2 md:grid-cols-[1fr_1fr_auto] md:items-start">
+                  <TextInput
+                    value={reference.title}
+                    onChange={(value) => {
+                      const references = p.references.map((item, i) => (i === index ? { ...item, title: value } : item));
+                      props.onChange({ ...p, references });
+                    }}
+                    placeholder="链接标题"
+                  />
+                  <TextInput
+                    value={reference.URL}
+                    onChange={(value) => {
+                      const references = p.references.map((item, i) => (i === index ? { ...item, URL: value } : item));
+                      props.onChange({ ...p, references });
+                    }}
+                    placeholder="https://example.com"
+                  />
+                  <button
+                    type="button"
+                    className="rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm text-[#DC2626] hover:bg-[#F5F6FA]"
+                    onClick={() => props.onChange({ ...p, references: p.references.filter((_, i) => i !== index) })}
+                  >
+                    移除
+                  </button>
+                </div>
+                {hasPartialValue && !hasValidPair ? (
+                  <div className="text-xs text-[#B91C1C]">标题和 URL 需要同时填写。</div>
+                ) : !hasValidUrl ? (
+                  <div className="text-xs text-[#B91C1C]">URL 必须以 http:// 或 https:// 开头。</div>
+                ) : null}
+              </div>
+            );
+          })}
         </div>
       </Field>
 
@@ -3567,14 +3509,15 @@ function InboxDrawerForm(props: {
           }}
         />
       </Field>
-      <Field label="详细描述">
-        <TextArea
+      <Field label="详细描述（Markdown）">
+        <MarkdownEditor
           value={draftDescription}
           onChange={(v) => {
             setDraftDescription(v);
             props.onChange({ ...inbox, name: draftName, description: v });
           }}
-          rows={8}
+          placeholder="输入详细描述，可自行使用 Markdown 组织结构"
+          contentClassName="project-md-editor__content--tall"
         />
       </Field>
 

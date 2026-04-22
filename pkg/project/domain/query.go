@@ -24,13 +24,13 @@ const (
 	ProjectSortByCreatedAt SortBy = "CreatedAt"
 	// ProjectSortByUpdatedAt sorts by updated time.
 	ProjectSortByUpdatedAt SortBy = "UpdatedAt"
-	// ProjectSortByName sorts by project name.
-	ProjectSortByName SortBy = "Name"
+	// ProjectSortByTitle sorts by project title.
+	ProjectSortByTitle SortBy = "Title"
 )
 
 func (s SortBy) valid() bool {
 	switch s {
-	case ProjectSortByCreatedAt, ProjectSortByUpdatedAt, ProjectSortByName:
+	case ProjectSortByCreatedAt, ProjectSortByUpdatedAt, ProjectSortByTitle:
 		return true
 	default:
 		return false
@@ -44,16 +44,12 @@ type Sort struct {
 }
 
 // ListQuery is used to query projects.
-//
-// NOTE: Add new filter fields here without changing repository method signatures.
 type ListQuery struct {
-	Status   *Status
-	Search   string
-	Contexts []string
-	Tags     []string
-	Sorts    []Sort
-	Limit    int
-	Offset   int
+	Status *Status
+	Search string
+	Sorts  []Sort
+	Limit  int
+	Offset int
 }
 
 func (q *ListQuery) normalize() {

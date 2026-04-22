@@ -1,57 +1,43 @@
 package domain
 
 import (
+	"fmt"
 	"net/url"
 	"strings"
 	"time"
 )
 
-type Link struct {
-	Label string
-	URL   string
-}
-
-type LabelKind string
-
-const (
-	LabelKindContext LabelKind = "Context"
-	LabelKindTag     LabelKind = "Tag"
-)
-
-type Label struct {
-	Value      string
-	Kind       LabelKind
-	Filterable bool
+type Reference struct {
+	Title string `json:"title"`
+	URL   string `json:"URL"`
 }
 
 type Goal struct {
-	Text        string
-	Completed   bool
-	CreatedAt   time.Time
-	CompletedAt *time.Time
+	Title       string     `json:"title"`
+	CreatedAt   time.Time  `json:"created_at"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
 }
 
 // Project is the aggregate root for project management.
 type Project struct {
-	ID           string
-	Name         string
-	Goals        []Goal
-	Description  string
-	Labels       []Label
-	Links        []Link
-	Status       Status
+	ID          string
+	Title       string
+	Goals       []Goal
+	Description string
+	References  []Reference
+	Status      Status
 
-	StartedAt   *time.Time
+	StartAt     *time.Time
 	CompletedAt *time.Time
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
 
 // NewProject creates a Project in draft status.
-func NewProject(id, name string, goals []Goal, description string, links []Link, now time.Time) (*Project, error) {
+func NewProject(id, title string, goals []Goal, description string, references []Reference, now time.Time) (*Project, error) {
 	if err := requiredFieldsError(
 		requiredField(id, "id"),
-		requiredField(name, "name"),
+		requiredField(title, "title"),
 		requiredField(description, "description"),
 	); err != nil {
 		return nil, err
@@ -59,29 +45,29 @@ func NewProject(id, name string, goals []Goal, description string, links []Link,
 	if err := validateGoals(goals); err != nil {
 		return nil, err
 	}
-	if err := validateLinks(links); err != nil {
+	if err := validateReferences(references); err != nil {
 		return nil, err
 	}
 
 	return &Project{
-		ID:           id,
-		Name:         name,
-		Goals:        normalizeGoals(goals, now),
-		Description:  description,
-		Links:        cloneLinks(links),
-		Status:       StatusDraft,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		ID:          id,
+		Title:       title,
+		Goals:       normalizeGoals(goals, now),
+		Description: description,
+		References:  cloneReferences(references),
+		Status:      StatusDraft,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}, nil
 }
 
 // UpdateDetails replaces core textual fields.
-func (p *Project) UpdateDetails(name string, goals []Goal, description string, links []Link, now time.Time) error {
+func (p *Project) UpdateDetails(title string, goals []Goal, description string, references []Reference, now time.Time) error {
 	if p == nil {
 		return ErrInvalidArg
 	}
 	if err := requiredFieldsError(
-		requiredField(name, "name"),
+		requiredField(title, "title"),
 		requiredField(description, "description"),
 	); err != nil {
 		return err
@@ -89,13 +75,13 @@ func (p *Project) UpdateDetails(name string, goals []Goal, description string, l
 	if err := validateGoals(goals); err != nil {
 		return err
 	}
-	if err := validateLinks(links); err != nil {
+	if err := validateReferences(references); err != nil {
 		return err
 	}
-	p.Name = name
+	p.Title = title
 	p.Goals = normalizeGoals(goals, now)
 	p.Description = description
-	p.Links = cloneLinks(links)
+	p.References = cloneReferences(references)
 	p.UpdatedAt = now
 	return nil
 }
@@ -108,60 +94,81 @@ func (p *Project) SetStatus(status Status, now time.Time) error {
 	if !status.Valid() {
 		return invalidFieldValueError("status", string(status))
 	}
-	// Minimal domain rules: manage timestamps based on status.
-	if status == StatusActive {
-		if p.StartedAt == nil {
-			p.StartedAt = ptrTime(now)
+	if !p.canTransitionTo(status) {
+		return &ValidationError{Problems: []string{fmt.Sprintf("status: Unsupported transition: %q -> %q", p.Status, status)}}
+	}
+
+	switch status {
+	case StatusActive:
+		if p.StartAt == nil {
+			p.StartAt = ptrTime(now)
 		}
 		p.CompletedAt = nil
-	}
-	if status == StatusCompleted {
+	case StatusCompleted:
 		if p.CompletedAt == nil {
 			p.CompletedAt = ptrTime(now)
 		}
+	case StatusDraft, StatusHold:
+		p.CompletedAt = nil
 	}
+
 	p.Status = status
 	p.UpdatedAt = now
 	return nil
+}
+
+func (p *Project) canTransitionTo(next Status) bool {
+	switch p.Status {
+	case StatusDraft:
+		return next == StatusDraft || next == StatusActive || next == StatusHold
+	case StatusActive:
+		return next == StatusActive || next == StatusCompleted || next == StatusHold
+	case StatusHold:
+		return next == StatusHold || next == StatusActive
+	case StatusCompleted:
+		return next == StatusCompleted
+	default:
+		return false
+	}
 }
 
 func ptrTime(t time.Time) *time.Time {
 	return &t
 }
 
-func validateLinks(links []Link) error {
-	for i, link := range links {
-		if link.Label == "" {
-			return &ValidationError{Problems: []string{`links[` + itoa(i) + `].label: Required value`}}
+func validateReferences(references []Reference) error {
+	for i, reference := range references {
+		if strings.TrimSpace(reference.Title) == "" {
+			return &ValidationError{Problems: []string{`references[` + itoa(i) + `].title: Required value`}}
 		}
-		if link.URL == "" {
-			return &ValidationError{Problems: []string{`links[` + itoa(i) + `].url: Required value`}}
+		if reference.URL == "" {
+			return &ValidationError{Problems: []string{`references[` + itoa(i) + `].url: Required value`}}
 		}
-		u, err := url.ParseRequestURI(link.URL)
+		u, err := url.ParseRequestURI(reference.URL)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-			return invalidFieldValueError(`links[`+itoa(i)+`].url`, link.URL)
+			return invalidFieldValueError(`references[`+itoa(i)+`].url`, reference.URL)
 		}
 	}
 	return nil
 }
 
-func cloneLinks(links []Link) []Link {
-	if len(links) == 0 {
+func cloneReferences(references []Reference) []Reference {
+	if len(references) == 0 {
 		return nil
 	}
-	out := make([]Link, len(links))
-	copy(out, links)
+	out := make([]Reference, len(references))
+	copy(out, references)
 	return out
 }
 
 func validateGoals(goals []Goal) error {
 	for i, goal := range goals {
-		text := strings.TrimSpace(goal.Text)
-		if text == "" {
-			return &ValidationError{Problems: []string{`goals[` + itoa(i) + `].text: Required value`}}
+		title := strings.TrimSpace(goal.Title)
+		if title == "" {
+			return &ValidationError{Problems: []string{`goals[` + itoa(i) + `].title: Required value`}}
 		}
-		if strings.Contains(text, "\n") || strings.Contains(text, "\r") {
-			return invalidFieldValueError(`goals[`+itoa(i)+`].text`, goal.Text)
+		if strings.Contains(title, "\n") || strings.Contains(title, "\r") {
+			return invalidFieldValueError(`goals[`+itoa(i)+`].title`, goal.Title)
 		}
 	}
 	return nil
@@ -173,22 +180,16 @@ func normalizeGoals(goals []Goal, now time.Time) []Goal {
 	}
 	out := make([]Goal, 0, len(goals))
 	for _, goal := range goals {
-		text := strings.TrimSpace(goal.Text)
-		g := Goal{Text: text}
+		title := strings.TrimSpace(goal.Title)
+		g := Goal{Title: title}
 		if goal.CreatedAt.IsZero() {
 			g.CreatedAt = now
 		} else {
 			g.CreatedAt = goal.CreatedAt
 		}
-		if goal.Completed {
-			g.Completed = true
-			if goal.CompletedAt != nil {
-				t := *goal.CompletedAt
-				g.CompletedAt = &t
-			} else {
-				t := now
-				g.CompletedAt = &t
-			}
+		if goal.CompletedAt != nil && !goal.CompletedAt.IsZero() {
+			t := *goal.CompletedAt
+			g.CompletedAt = &t
 		}
 		out = append(out, g)
 	}

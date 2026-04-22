@@ -69,6 +69,7 @@ function waitingListBucket(): ItemBucket {
 
 export async function listWaitingLists(q?: ListWaitingListsQuery): Promise<WaitingList[]> {
   const items = await listItems({
+    kind: "WaitingFor",
     bucket: waitingListBucket(),
     search: q?.search,
     sortBy: mapSortBy(q?.sortBy),

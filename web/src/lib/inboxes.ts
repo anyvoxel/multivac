@@ -1,11 +1,4 @@
-import {
-  createItem,
-  deleteItem,
-  getItem,
-  listItems,
-  updateItem,
-} from "./items";
-import type { Item, ItemBucket, ItemSortBy, SortDir } from "./items";
+export type SortDir = "Asc" | "Desc";
 
 export type Inbox = {
   id: string;
@@ -32,84 +25,59 @@ export type ListInboxesQuery = {
   offset?: number;
 };
 
-function mapSortBy(sortBy?: InboxSortBy): ItemSortBy | undefined {
-  switch (sortBy) {
-    case "Name":
-      return "Title";
-    case "CreatedAt":
-      return "CreatedAt";
-    case "UpdatedAt":
-      return "UpdatedAt";
-    default:
-      return undefined;
+function apiBase(): string {
+  const v = import.meta.env.VITE_API_BASE as string | undefined;
+  if (v === undefined) return "";
+  return v;
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${apiBase()}${path}`, {
+    ...init,
+    headers: {
+      "content-type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+  });
+
+  if (res.status === 204) {
+    return undefined as unknown as T;
   }
-}
 
-function fromItem(item: Item): Inbox {
-  return {
-    id: item.id,
-    name: item.title,
-    description: item.description,
-    createdAt: item.createdAt,
-    updatedAt: item.updatedAt,
-  };
-}
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : undefined;
 
-function inboxBucket(): ItemBucket {
-  return "Inbox";
+  if (!res.ok) {
+    const msg = (data && typeof data.error === "string" && data.error) || `${res.status} ${res.statusText}`;
+    throw new Error(msg);
+  }
+
+  return data as T;
 }
 
 export async function listInboxes(q?: ListInboxesQuery): Promise<Inbox[]> {
-  const items = await listItems({
-    bucket: inboxBucket(),
-    search: q?.search,
-    sortBy: mapSortBy(q?.sortBy),
-    sortDir: q?.sortDir,
-    limit: q?.limit,
-    offset: q?.offset,
-  });
-  return items.map(fromItem);
+  const sp = new URLSearchParams();
+  if (q?.search) sp.set("search", q.search);
+  if (q?.sortBy) sp.set("sortBy", q.sortBy);
+  if (q?.sortDir) sp.set("sortDir", q.sortDir);
+  if (q?.limit !== undefined) sp.set("limit", String(q.limit));
+  if (q?.offset !== undefined) sp.set("offset", String(q.offset));
+  const qs = sp.toString();
+  return request<Inbox[]>(`/api/v1/inboxes${qs ? `?${qs}` : ""}`);
 }
 
 export async function getInbox(id: string): Promise<Inbox> {
-  return fromItem(await getItem(id));
+  return request<Inbox>(`/api/v1/inboxes/${encodeURIComponent(id)}`);
 }
 
 export async function createInbox(input: CreateInboxInput): Promise<Inbox> {
-  return fromItem(
-    await createItem({
-      kind: "Inbox",
-      bucket: inboxBucket(),
-      title: input.name,
-      description: input.description,
-      labels: [],
-      context: "",
-      details: "",
-    }),
-  );
+  return request<Inbox>("/api/v1/inboxes", { method: "POST", body: JSON.stringify(input) });
 }
 
 export async function updateInbox(id: string, input: UpdateInboxInput): Promise<Inbox> {
-  const current = await getItem(id);
-  return fromItem(
-    await updateItem(id, {
-      kind: current.kind,
-      bucket: current.bucket,
-      projectId: current.projectId,
-      title: input.name,
-      description: input.description,
-      labels: current.labels,
-      context: current.context,
-      details: current.details,
-      taskStatus: current.taskStatus,
-      priority: current.priority,
-      waitingFor: current.waitingFor,
-      expectedAt: current.expectedAt,
-      dueAt: current.dueAt,
-    }),
-  );
+  return request<Inbox>(`/api/v1/inboxes/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(input) });
 }
 
 export async function deleteInbox(id: string): Promise<void> {
-  await deleteItem(id);
+  await request<void>(`/api/v1/inboxes/${encodeURIComponent(id)}`, { method: "DELETE" });
 }

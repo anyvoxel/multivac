@@ -6,6 +6,7 @@ require (
 	github.com/cloudwego/hertz v0.10.2
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/mattn/go-sqlite3 v1.14.32
+	github.com/oklog/ulid/v2 v2.1.1
 	github.com/onsi/gomega v1.38.2
 )
 

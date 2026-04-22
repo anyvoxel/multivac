@@ -15,9 +15,9 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	"github.com/anyvoxel/multivac/internal/webui"
-	itemapp "github.com/anyvoxel/multivac/pkg/item/application"
-	itemsqlite "github.com/anyvoxel/multivac/pkg/item/infra/sqlite"
-	itemhttp "github.com/anyvoxel/multivac/pkg/item/interfaces/http"
+	inboxapp "github.com/anyvoxel/multivac/pkg/inbox/application"
+	inboxsqlite "github.com/anyvoxel/multivac/pkg/inbox/infra/sqlite"
+	inboxhttp "github.com/anyvoxel/multivac/pkg/inbox/interfaces/http"
 	"github.com/anyvoxel/multivac/pkg/project/application"
 	"github.com/anyvoxel/multivac/pkg/project/infra/sqlite"
 	projecthttp "github.com/anyvoxel/multivac/pkg/project/interfaces/http"
@@ -40,7 +40,7 @@ func main() {
 }
 
 func run(addr, dbPath string) error {
-	db, projHandler, itemHandler, err := setupServices(dbPath)
+	db, projHandler, inboxHandler, err := setupServices(dbPath)
 	if err != nil {
 		return err
 	}
@@ -86,13 +86,11 @@ func run(addr, dbPath string) error {
 	api.PATCH("/projects/:id/status", projHandler.SetStatus)
 	api.DELETE("/projects/:id", projHandler.Delete)
 
-	api.POST("/items", itemHandler.Create)
-	api.GET("/items", itemHandler.List)
-	api.GET("/items/:id", itemHandler.Get)
-	api.PUT("/items/:id", itemHandler.Update)
-	api.PATCH("/items/:id/bucket", itemHandler.MoveBucket)
-	api.DELETE("/items/:id", itemHandler.Delete)
-
+	api.POST("/inboxes", inboxHandler.Create)
+	api.GET("/inboxes", inboxHandler.List)
+	api.GET("/inboxes/:id", inboxHandler.Get)
+	api.PUT("/inboxes/:id", inboxHandler.Update)
+	api.DELETE("/inboxes/:id", inboxHandler.Delete)
 
 	// Web UI (embedded). It serves SPA under /.
 	h.GET("/*filepath", func(_ context.Context, ctx *app.RequestContext) {
@@ -104,6 +102,10 @@ func run(addr, dbPath string) error {
 		}
 		if !strings.HasPrefix(p, "/") {
 			p = "/" + p
+		}
+		if strings.HasPrefix(p, "/api/") {
+			ctx.Status(http.StatusNotFound)
+			return
 		}
 		asset, err := webui.ReadAsset(p)
 		if err != nil {
@@ -122,7 +124,7 @@ func run(addr, dbPath string) error {
 	return nil
 }
 
-func setupServices(dbPath string) (*sqlx.DB, *projecthttp.Handler, *itemhttp.Handler, error) {
+func setupServices(dbPath string) (*sqlx.DB, *projecthttp.Handler, *inboxhttp.Handler, error) {
 	db, err := sqlx.Open("sqlite3", dbPath)
 	if err != nil {
 		return nil, nil, nil, err
@@ -146,13 +148,13 @@ func setupServices(dbPath string) (*sqlx.DB, *projecthttp.Handler, *itemhttp.Han
 	}
 	projHandler := projecthttp.NewHandler(projSvc)
 
-	itemRepo := itemsqlite.NewRepository(db)
-	itemSvc := itemapp.NewService(itemRepo)
-	if err := itemSvc.Migrate(context.Background()); err != nil {
+	inboxRepo := inboxsqlite.NewRepository(db)
+	inboxSvc := inboxapp.NewService(inboxRepo)
+	if err := inboxSvc.Migrate(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, nil, nil, err
 	}
-	itemHandler := itemhttp.NewHandler(itemSvc)
+	inboxHandler := inboxhttp.NewHandler(inboxSvc)
 
-	return db, projHandler, itemHandler, nil
+	return db, projHandler, inboxHandler, nil
 }

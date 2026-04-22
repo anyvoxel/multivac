@@ -193,6 +193,10 @@
   outline: none;
 }
 
+.project-md-editor__content--tall {
+  min-height: 18rem;
+}
+
 .project-md-editor__content[data-placeholder]:empty::before {
   color: #9ca3af;
   content: attr(data-placeholder);
@@ -209,9 +213,30 @@
 
 .project-create-dialog {
   max-height: min(90vh, 960px);
+  overflow: visible;
 }
 
 .project-create-dialog__body {
   max-height: calc(min(90vh, 960px) - 73px);
+  overflow-x: visible;
+  overflow-y: auto;
+}
+
+[class*="_popupContainer_"],
+.mdxeditor-popup-container {
+  z-index: 60 !important;
+}
+
+[data-radix-popper-content-wrapper] {
+  z-index: 61 !important;
+}
+
+[class*="_toolbarNodeKindSelectContainer_"],
+[class*="_toolbarButtonDropdownContainer_"],
+[class*="_toolbarCodeBlockLanguageSelectContent_"],
+[class*="_selectContainer_"],
+[class*="_popoverContent_"],
+[class*="_tooltipContent_"] {
+  z-index: 62 !important;
 }
 

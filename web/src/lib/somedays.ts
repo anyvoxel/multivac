@@ -61,6 +61,7 @@ function somedayBucket(): ItemBucket {
 
 export async function listSomedays(q?: ListSomedaysQuery): Promise<Someday[]> {
   const items = await listItems({
+    kind: "SomedayMaybe",
     bucket: somedayBucket(),
     search: q?.search,
     sortBy: mapSortBy(q?.sortBy),

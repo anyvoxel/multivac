@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
@@ -23,7 +24,7 @@ func TestRepositoryCRUD(t *testing.T) {
 	g.Expect(repo.Migrate(ctx)).To(gomega.Succeed())
 
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	p, err := domain.NewProject("p1", "n", []domain.Goal{{Text: "g"}}, "d", nil, now)
+	p, err := domain.NewProject("p1", "n", []domain.Goal{{Title: "g"}}, "d", []domain.Reference{{Title: "ref", URL: "https://example.com"}}, now)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
 	g.Expect(repo.Create(ctx, p)).To(gomega.Succeed())
@@ -31,7 +32,9 @@ func TestRepositoryCRUD(t *testing.T) {
 	got, err := repo.Get(ctx, "p1")
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(got.ID).To(gomega.Equal("p1"))
-	g.Expect(got.Name).To(gomega.Equal("n"))
+	g.Expect(got.Title).To(gomega.Equal("n"))
+	g.Expect(got.Description).To(gomega.Equal("d"))
+	g.Expect(got.References).To(gomega.HaveLen(1))
 
 	status := domain.StatusDraft
 	list, err := repo.List(ctx, domain.ListQuery{Status: &status})
@@ -39,15 +42,15 @@ func TestRepositoryCRUD(t *testing.T) {
 	g.Expect(list).To(gomega.HaveLen(1))
 
 	now2 := now.Add(time.Hour)
-	g.Expect(p.UpdateDetails("n2", []domain.Goal{{Text: "g2"}}, "d2", nil, now2)).To(gomega.Succeed())
+	g.Expect(p.UpdateDetails("n2", []domain.Goal{{Title: "g2"}}, "d2", []domain.Reference{{Title: "docs", URL: "https://example.com/docs"}}, now2)).To(gomega.Succeed())
 	g.Expect(p.SetStatus(domain.StatusActive, now2)).To(gomega.Succeed())
 	g.Expect(repo.Update(ctx, p)).To(gomega.Succeed())
 
 	got2, err := repo.Get(ctx, "p1")
 	g.Expect(err).ToNot(gomega.HaveOccurred())
-	g.Expect(got2.Name).To(gomega.Equal("n2"))
+	g.Expect(got2.Title).To(gomega.Equal("n2"))
 	g.Expect(got2.Status).To(gomega.Equal(domain.StatusActive))
-	g.Expect(got2.StartedAt).ToNot(gomega.BeNil())
+	g.Expect(got2.StartAt).ToNot(gomega.BeNil())
 
 	g.Expect(repo.Delete(ctx, "p1")).To(gomega.Succeed())
 	_, err = repo.Get(ctx, "p1")
@@ -66,11 +69,11 @@ func TestRepositoryListSupportsSearchPaginationAndSort(t *testing.T) {
 	g.Expect(repo.Migrate(ctx)).To(gomega.Succeed())
 
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
-	alpha, err := domain.NewProject("p1", "Alpha Search", []domain.Goal{{Text: "Goal One"}}, "Desc", nil, now)
+	alpha, err := domain.NewProject("p1", "Alpha Search", []domain.Goal{{Title: "Goal One"}}, "Desc", nil, now)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
-	beta, err := domain.NewProject("p2", "Beta", []domain.Goal{{Text: "Search Goal"}}, "Desc", nil, now.Add(time.Minute))
+	beta, err := domain.NewProject("p2", "Beta", []domain.Goal{{Title: "Search Goal"}}, "Search Desc", nil, now.Add(time.Minute))
 	g.Expect(err).ToNot(gomega.HaveOccurred())
-	gamma, err := domain.NewProject("p3", "Gamma", []domain.Goal{{Text: "Other"}}, "Vision Search", nil, now.Add(2*time.Minute))
+	gamma, err := domain.NewProject("p3", "Gamma", []domain.Goal{{Title: "Other"}}, "Vision Search", nil, now.Add(2*time.Minute))
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(gamma.SetStatus(domain.StatusActive, now.Add(3*time.Minute))).To(gomega.Succeed())
 
@@ -84,7 +87,7 @@ func TestRepositoryListSupportsSearchPaginationAndSort(t *testing.T) {
 
 	paged, err := repo.List(ctx, domain.ListQuery{
 		Search: "search",
-		Sorts:  []domain.Sort{{By: domain.ProjectSortByName, Dir: domain.SortAsc}},
+		Sorts:  []domain.Sort{{By: domain.ProjectSortByTitle, Dir: domain.SortAsc}},
 		Limit:  1,
 		Offset: 1,
 	})
@@ -105,4 +108,37 @@ func TestRepositoryListSupportsSearchPaginationAndSort(t *testing.T) {
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(caseInsensitive).To(gomega.HaveLen(1))
 	g.Expect(caseInsensitive[0].ID).To(gomega.Equal("p1"))
+}
+
+func TestRepositoryStoresJSONBColumns(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	db, err := sqlx.Open("sqlite3", ":memory:")
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	defer func() { _ = db.Close() }()
+
+	repo := NewRepository(db)
+	ctx := context.Background()
+	g.Expect(repo.Migrate(ctx)).To(gomega.Succeed())
+
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	p, err := domain.NewProject("p1", "n", []domain.Goal{{Title: "g"}}, "d", []domain.Reference{{Title: "ref", URL: "https://example.com"}}, now)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(repo.Create(ctx, p)).To(gomega.Succeed())
+
+	var goalsType string
+	err = db.GetContext(ctx, &goalsType, `SELECT typeof(goals) FROM projects WHERE id = ?`, "p1")
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(goalsType).To(gomega.Equal("blob"))
+
+	var referencesType string
+	err = db.GetContext(ctx, &referencesType, `SELECT typeof("references") FROM projects WHERE id = ?`, "p1")
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(referencesType).To(gomega.Equal("blob"))
+
+	var goalJSON sql.NullString
+	err = db.GetContext(ctx, &goalJSON, `SELECT json(goals) FROM projects WHERE id = ?`, "p1")
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(goalJSON.Valid).To(gomega.BeTrue())
+	g.Expect(goalJSON.String).To(gomega.ContainSubstring(`"title":"g"`))
 }
