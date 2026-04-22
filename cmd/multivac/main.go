@@ -15,12 +15,18 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	"github.com/anyvoxel/multivac/internal/webui"
+	contextapp "github.com/anyvoxel/multivac/pkg/context/application"
+	contextsqlite "github.com/anyvoxel/multivac/pkg/context/infra/sqlite"
+	contexthttp "github.com/anyvoxel/multivac/pkg/context/interfaces/http"
 	inboxapp "github.com/anyvoxel/multivac/pkg/inbox/application"
 	inboxsqlite "github.com/anyvoxel/multivac/pkg/inbox/infra/sqlite"
 	inboxhttp "github.com/anyvoxel/multivac/pkg/inbox/interfaces/http"
 	"github.com/anyvoxel/multivac/pkg/project/application"
 	"github.com/anyvoxel/multivac/pkg/project/infra/sqlite"
 	projecthttp "github.com/anyvoxel/multivac/pkg/project/interfaces/http"
+	referenceapp "github.com/anyvoxel/multivac/pkg/reference/application"
+	referencesqlite "github.com/anyvoxel/multivac/pkg/reference/infra/sqlite"
+	referencehttp "github.com/anyvoxel/multivac/pkg/reference/interfaces/http"
 	"github.com/anyvoxel/multivac/pkg/utils/version"
 )
 
@@ -40,7 +46,7 @@ func main() {
 }
 
 func run(addr, dbPath string) error {
-	db, projHandler, inboxHandler, err := setupServices(dbPath)
+	db, projHandler, inboxHandler, contextHandler, referenceHandler, err := setupServices(dbPath)
 	if err != nil {
 		return err
 	}
@@ -92,6 +98,18 @@ func run(addr, dbPath string) error {
 	api.PUT("/inboxes/:id", inboxHandler.Update)
 	api.DELETE("/inboxes/:id", inboxHandler.Delete)
 
+	api.POST("/contexts", contextHandler.Create)
+	api.GET("/contexts", contextHandler.List)
+	api.GET("/contexts/:id", contextHandler.Get)
+	api.PUT("/contexts/:id", contextHandler.Update)
+	api.DELETE("/contexts/:id", contextHandler.Delete)
+
+	api.POST("/references", referenceHandler.Create)
+	api.GET("/references", referenceHandler.List)
+	api.GET("/references/:id", referenceHandler.Get)
+	api.PUT("/references/:id", referenceHandler.Update)
+	api.DELETE("/references/:id", referenceHandler.Delete)
+
 	// Web UI (embedded). It serves SPA under /.
 	h.GET("/*filepath", func(_ context.Context, ctx *app.RequestContext) {
 		p := ctx.Param("filepath")
@@ -124,27 +142,27 @@ func run(addr, dbPath string) error {
 	return nil
 }
 
-func setupServices(dbPath string) (*sqlx.DB, *projecthttp.Handler, *inboxhttp.Handler, error) {
+func setupServices(dbPath string) (*sqlx.DB, *projecthttp.Handler, *inboxhttp.Handler, *contexthttp.Handler, *referencehttp.Handler, error) {
 	db, err := sqlx.Open("sqlite3", dbPath)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 	db.SetMaxOpenConns(1)
 	db.SetConnMaxLifetime(time.Minute)
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 	if _, err := db.Exec("PRAGMA foreign_keys = ON;"); err != nil {
 		_ = db.Close()
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 
 	projRepo := sqlite.NewRepository(db)
 	projSvc := application.NewService(projRepo)
 	if err := projSvc.Migrate(context.Background()); err != nil {
 		_ = db.Close()
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 	projHandler := projecthttp.NewHandler(projSvc)
 
@@ -152,9 +170,25 @@ func setupServices(dbPath string) (*sqlx.DB, *projecthttp.Handler, *inboxhttp.Ha
 	inboxSvc := inboxapp.NewService(inboxRepo)
 	if err := inboxSvc.Migrate(context.Background()); err != nil {
 		_ = db.Close()
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 	inboxHandler := inboxhttp.NewHandler(inboxSvc)
 
-	return db, projHandler, inboxHandler, nil
+	contextRepo := contextsqlite.NewRepository(db)
+	contextSvc := contextapp.NewService(contextRepo)
+	if err := contextSvc.Migrate(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, nil, nil, nil, nil, err
+	}
+	contextHandler := contexthttp.NewHandler(contextSvc)
+
+	referenceRepo := referencesqlite.NewRepository(db)
+	referenceSvc := referenceapp.NewService(referenceRepo)
+	if err := referenceSvc.Migrate(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, nil, nil, nil, nil, err
+	}
+	referenceHandler := referencehttp.NewHandler(referenceSvc)
+
+	return db, projHandler, inboxHandler, contextHandler, referenceHandler, nil
 }

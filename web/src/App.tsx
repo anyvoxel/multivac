@@ -44,6 +44,22 @@ import {
 } from "./lib/inboxes";
 import type { Inbox } from "./lib/inboxes";
 import {
+  createContext,
+  deleteContext,
+  getContext,
+  listContexts,
+  updateContext,
+} from "./lib/contexts";
+import type { Context as ManagedContext } from "./lib/contexts";
+import {
+  createReference,
+  deleteReference,
+  getReference,
+  listReferences,
+  updateReference,
+} from "./lib/references";
+import type { Reference as ManagedReference } from "./lib/references";
+import {
   createSomeday,
   deleteSomeday,
   getSomeday,
@@ -76,7 +92,7 @@ import {
   toLocalDateKey,
 } from "./lib/time";
 
-type Route = "projects" | "tasks" | "inboxes" | "somedays" | "waitingLists" | "schedule";
+type Route = "projects" | "tasks" | "inboxes" | "contexts" | "references" | "somedays" | "waitingLists" | "schedule";
 
 const PROJECT_STATUSES: ProjectStatus[] = [
   "Draft",
@@ -99,6 +115,8 @@ const EMPTY_TASK_PROJECT_SENTINEL = "__NONE__";
 const SCHEDULE_WEEK_STARTS_ON = 0;
 
 type ProjectDrawerState = Project;
+type ContextDrawerState = ManagedContext;
+type ReferenceDrawerState = ManagedReference;
 
 function parseLabelFilterInput(input: string): string[] {
   const seen = new Set<string>();
@@ -177,17 +195,52 @@ function createEmptyProject(): ProjectDrawerState {
   };
 }
 
+function createEmptyContext(): ContextDrawerState {
+  const now = new Date().toISOString();
+  return {
+    id: "",
+    title: "",
+    description: "",
+    color: "#4f46e5",
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function createEmptyReferenceLink(): ReferenceDrawerState["references"][number] {
+  return {
+    title: "",
+    url: "",
+  };
+}
+
+function createEmptyReference(): ReferenceDrawerState {
+  const now = new Date().toISOString();
+  return {
+    id: "",
+    title: "",
+    description: "",
+    references: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 function allowedProjectStatuses(project: ProjectDrawerState, mode: "create" | "edit"): ProjectStatus[] {
   return mode === "create" ? PROJECT_CREATE_STATUSES : PROJECT_STATUS_TRANSITIONS[project.status] ?? PROJECT_STATUSES;
 }
 
-function isProjectReferenceUrl(value: string): boolean {
+function isHttpUrl(value: string): boolean {
   try {
     const url = new URL(value);
     return url.protocol === "http:" || url.protocol === "https:";
   } catch {
     return false;
   }
+}
+
+function isProjectReferenceUrl(value: string): boolean {
+  return isHttpUrl(value);
 }
 
 function classNames(...parts: Array<string | false | null | undefined>) {
@@ -561,6 +614,22 @@ export default function App() {
   const [inboxPageSize, setInboxPageSize] = useState(PAGE_SIZE_OPTIONS[0]);
   const [inboxHasNext, setInboxHasNext] = useState(false);
 
+  // Contexts list page state
+  const [contextLoading, setContextLoading] = useState(false);
+  const [contextError, setContextError] = useState<string>("");
+  const [contexts, setContexts] = useState<ManagedContext[]>([]);
+  const [contextOffset, setContextOffset] = useState(0);
+  const [contextPageSize, setContextPageSize] = useState(PAGE_SIZE_OPTIONS[0]);
+  const [contextHasNext, setContextHasNext] = useState(false);
+
+  // References list page state
+  const [referenceLoading, setReferenceLoading] = useState(false);
+  const [referenceError, setReferenceError] = useState<string>("");
+  const [references, setReferences] = useState<ManagedReference[]>([]);
+  const [referenceOffset, setReferenceOffset] = useState(0);
+  const [referencePageSize, setReferencePageSize] = useState(PAGE_SIZE_OPTIONS[0]);
+  const [referenceHasNext, setReferenceHasNext] = useState(false);
+
   // Somedays list page state
   const [somedayLoading, setSomedayLoading] = useState(false);
   const [somedayError, setSomedayError] = useState<string>("");
@@ -592,6 +661,10 @@ export default function App() {
     | { type: "task"; mode: "edit"; id: string }
     | { type: "inbox"; mode: "create" }
     | { type: "inbox"; mode: "edit"; id: string }
+    | { type: "context"; mode: "create" }
+    | { type: "context"; mode: "edit"; id: string }
+    | { type: "reference"; mode: "create" }
+    | { type: "reference"; mode: "edit"; id: string }
     | { type: "someday"; mode: "create" }
     | { type: "someday"; mode: "edit"; id: string }
     | { type: "waitingList"; mode: "create" }
@@ -603,6 +676,8 @@ export default function App() {
   const [drawerTask, setDrawerTask] = useState<Task | null>(null);
   const [drawerInbox, setDrawerInboxState] = useState<Inbox | null>(null);
   const drawerInboxRef = useRef<Inbox | null>(null);
+  const [drawerContext, setDrawerContext] = useState<ContextDrawerState | null>(null);
+  const [drawerReference, setDrawerReference] = useState<ReferenceDrawerState | null>(null);
   const [drawerSomeday, setDrawerSomeday] = useState<Someday | null>(null);
   const [drawerWaitingList, setDrawerWaitingList] = useState<WaitingList | null>(null);
 
@@ -633,6 +708,8 @@ export default function App() {
     setDrawerProject(null);
     setDrawerTask(null);
     setDrawerInbox(null);
+    setDrawerContext(null);
+    setDrawerReference(null);
     setDrawerSomeday(null);
     setDrawerWaitingList(null);
   }
@@ -695,6 +772,42 @@ export default function App() {
       setInboxError(String(e));
     } finally {
       setInboxLoading(false);
+    }
+  }
+
+  async function refreshContexts() {
+    setContextLoading(true);
+    setContextError("");
+    try {
+      const list = await listContexts({
+        search: normalizedSearch || undefined,
+        limit: contextPageSize + 1,
+        offset: contextOffset,
+      });
+      setContexts(list.slice(0, contextPageSize));
+      setContextHasNext(list.length > contextPageSize);
+    } catch (e) {
+      setContextError(String(e));
+    } finally {
+      setContextLoading(false);
+    }
+  }
+
+  async function refreshReferences() {
+    setReferenceLoading(true);
+    setReferenceError("");
+    try {
+      const list = await listReferences({
+        search: normalizedSearch || undefined,
+        limit: referencePageSize + 1,
+        offset: referenceOffset,
+      });
+      setReferences(list.slice(0, referencePageSize));
+      setReferenceHasNext(list.length > referencePageSize);
+    } catch (e) {
+      setReferenceError(String(e));
+    } finally {
+      setReferenceLoading(false);
     }
   }
 
@@ -766,6 +879,14 @@ export default function App() {
   }, [search, inboxPageSize]);
 
   useEffect(() => {
+    setContextOffset(0);
+  }, [search, contextPageSize]);
+
+  useEffect(() => {
+    setReferenceOffset(0);
+  }, [search, referencePageSize]);
+
+  useEffect(() => {
     setSomedayOffset(0);
   }, [search, somedayPageSize]);
 
@@ -783,6 +904,18 @@ export default function App() {
     void refreshInboxes();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route, inboxOffset, inboxPageSize, normalizedSearch]);
+
+  useEffect(() => {
+    if (route !== "contexts") return;
+    void refreshContexts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route, contextOffset, contextPageSize, normalizedSearch]);
+
+  useEffect(() => {
+    if (route !== "references") return;
+    void refreshReferences();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route, referenceOffset, referencePageSize, normalizedSearch]);
 
   useEffect(() => {
     if (route !== "somedays") return;
@@ -806,6 +939,8 @@ export default function App() {
     projects: "项目管理",
     tasks: "任务管理",
     inboxes: "收集箱管理",
+    contexts: "情境管理",
+    references: "资料管理",
     schedule: "日程管理",
     somedays: "将来/也许管理",
     waitingLists: "等待列表管理",
@@ -816,6 +951,8 @@ export default function App() {
     setDrawerProject(null);
     setDrawerTask(null);
     setDrawerInbox(null);
+    setDrawerContext(null);
+    setDrawerReference(null);
     setDrawerSomeday(null);
     setDrawerWaitingList(null);
     setDrawerLoading(true);
@@ -841,6 +978,8 @@ export default function App() {
     setDrawerProject(null);
     setDrawerTask(null);
     setDrawerInbox(null);
+    setDrawerContext(null);
+    setDrawerReference(null);
     setDrawerSomeday(null);
     setDrawerWaitingList(null);
     setDrawerLoading(true);
@@ -889,6 +1028,8 @@ export default function App() {
     setDrawerProject(null);
     setDrawerTask(null);
     setDrawerInbox(null);
+    setDrawerContext(null);
+    setDrawerReference(null);
     setDrawerSomeday(null);
     setDrawerWaitingList(null);
     setDrawerLoading(true);
@@ -920,10 +1061,74 @@ export default function App() {
     }
   }
 
+  async function openContextDrawer(mode: "create" | "edit", id?: string, contextItem?: ManagedContext) {
+    setDrawerProject(null);
+    setDrawerTask(null);
+    setDrawerInbox(null);
+    setDrawerContext(null);
+    setDrawerReference(null);
+    setDrawerSomeday(null);
+    setDrawerWaitingList(null);
+    setDrawerLoading(true);
+    setContextError("");
+    try {
+      if (mode === "create") {
+        setDrawer({ type: "context", mode: "create" });
+        setDrawerContext(createEmptyContext());
+        return;
+      }
+      if (!id) return;
+      setDrawer({ type: "context", mode: "edit", id });
+      if (contextItem) {
+        setDrawerContext(contextItem);
+        return;
+      }
+      const found = await getContext(id);
+      setDrawerContext(found);
+    } catch (e) {
+      setContextError(String(e));
+    } finally {
+      setDrawerLoading(false);
+    }
+  }
+
+  async function openReferenceDrawer(mode: "create" | "edit", id?: string, reference?: ManagedReference) {
+    setDrawerProject(null);
+    setDrawerTask(null);
+    setDrawerInbox(null);
+    setDrawerContext(null);
+    setDrawerReference(null);
+    setDrawerSomeday(null);
+    setDrawerWaitingList(null);
+    setDrawerLoading(true);
+    setReferenceError("");
+    try {
+      if (mode === "create") {
+        setDrawer({ type: "reference", mode: "create" });
+        setDrawerReference(createEmptyReference());
+        return;
+      }
+      if (!id) return;
+      setDrawer({ type: "reference", mode: "edit", id });
+      if (reference) {
+        setDrawerReference(reference);
+        return;
+      }
+      const found = await getReference(id);
+      setDrawerReference(found);
+    } catch (e) {
+      setReferenceError(String(e));
+    } finally {
+      setDrawerLoading(false);
+    }
+  }
+
   async function openSomedayDrawer(mode: "create" | "edit", id?: string, someday?: Someday) {
     setDrawerProject(null);
     setDrawerTask(null);
     setDrawerInbox(null);
+    setDrawerContext(null);
+    setDrawerReference(null);
     setDrawerSomeday(null);
     setDrawerWaitingList(null);
     setDrawerLoading(true);
@@ -959,6 +1164,8 @@ export default function App() {
     setDrawerProject(null);
     setDrawerTask(null);
     setDrawerInbox(null);
+    setDrawerContext(null);
+    setDrawerReference(null);
     setDrawerSomeday(null);
     setDrawerWaitingList(null);
     setDrawerLoading(true);
@@ -1027,6 +1234,40 @@ export default function App() {
     }
   }
 
+  async function onDeleteContextItem(contextItem: ManagedContext) {
+    if (!confirm(`确定删除情境: ${contextItem.title} ?`)) return;
+    setContextLoading(true);
+    setContextError("");
+    try {
+      await deleteContext(contextItem.id);
+      if (drawer.type === "context" && drawer.mode === "edit" && drawer.id === contextItem.id) {
+        closeDrawer();
+      }
+      await refreshContexts();
+    } catch (e) {
+      setContextError(String(e));
+    } finally {
+      setContextLoading(false);
+    }
+  }
+
+  async function onDeleteReferenceItem(reference: ManagedReference) {
+    if (!confirm(`确定删除资料: ${reference.title} ?`)) return;
+    setReferenceLoading(true);
+    setReferenceError("");
+    try {
+      await deleteReference(reference.id);
+      if (drawer.type === "reference" && drawer.mode === "edit" && drawer.id === reference.id) {
+        closeDrawer();
+      }
+      await refreshReferences();
+    } catch (e) {
+      setReferenceError(String(e));
+    } finally {
+      setReferenceLoading(false);
+    }
+  }
+
   async function onRefreshAll() {
     switch (route) {
       case "projects":
@@ -1034,6 +1275,12 @@ export default function App() {
         return;
       case "inboxes":
         await refreshInboxes();
+        return;
+      case "contexts":
+        await refreshContexts();
+        return;
+      case "references":
+        await refreshReferences();
         return;
       case "somedays":
         await refreshSomedays();
@@ -1103,6 +1350,24 @@ export default function App() {
               }}
             />
             <NavItemLight
+              active={route === "contexts"}
+              icon={<IconClock />}
+              label="情境"
+              onClick={() => {
+                setRoute("contexts");
+                setSearch("");
+              }}
+            />
+            <NavItemLight
+              active={route === "references"}
+              icon={<IconInbox />}
+              label="资料"
+              onClick={() => {
+                setRoute("references");
+                setSearch("");
+              }}
+            />
+            <NavItemLight
               active={route === "somedays"}
               icon={<IconClock />}
               label="将来/也许"
@@ -1153,18 +1418,22 @@ export default function App() {
                     </button>
                   ) : null}
                 </div>
-                <input
-                  className="w-36 rounded-md border border-[#E6E8F0] bg-white px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#4F46E5]"
-                  placeholder="情境(@office)"
-                  value={contextFilterInput}
-                  onChange={(e) => setContextFilterInput(e.target.value)}
-                />
-                <input
-                  className="w-36 rounded-md border border-[#E6E8F0] bg-white px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#4F46E5]"
-                  placeholder="标签(#urgent)"
-                  value={tagFilterInput}
-                  onChange={(e) => setTagFilterInput(e.target.value)}
-                />
+                {route === "tasks" || route === "schedule" ? (
+                  <>
+                    <input
+                      className="w-36 rounded-md border border-[#E6E8F0] bg-white px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#4F46E5]"
+                      placeholder="情境(@office)"
+                      value={contextFilterInput}
+                      onChange={(e) => setContextFilterInput(e.target.value)}
+                    />
+                    <input
+                      className="w-36 rounded-md border border-[#E6E8F0] bg-white px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#4F46E5]"
+                      placeholder="标签(#urgent)"
+                      value={tagFilterInput}
+                      onChange={(e) => setTagFilterInput(e.target.value)}
+                    />
+                  </>
+                ) : null}
                 <button
                   className="flex items-center justify-center rounded-md border border-[#E6E8F0] bg-white p-2 text-[#6B7280] hover:bg-[#F5F6FA]"
                   type="button"
@@ -1180,6 +1449,8 @@ export default function App() {
                     if (route === "projects") void openProjectDrawer("create");
                     else if (route === "tasks" || route === "schedule") void openTaskDrawer("create");
                     else if (route === "inboxes") void openInboxDrawer("create");
+                    else if (route === "contexts") void openContextDrawer("create");
+                    else if (route === "references") void openReferenceDrawer("create");
                     else if (route === "somedays") void openSomedayDrawer("create");
                     else void openWaitingListDrawer("create");
                   }}
@@ -1199,6 +1470,16 @@ export default function App() {
             {route === "inboxes" && inboxError ? (
               <div className="mb-4 rounded-md border border-[#FCA5A5] bg-[#FEF2F2] px-3 py-2 text-sm text-[#B91C1C]">
                 {inboxError}
+              </div>
+            ) : null}
+            {route === "contexts" && contextError ? (
+              <div className="mb-4 rounded-md border border-[#FCA5A5] bg-[#FEF2F2] px-3 py-2 text-sm text-[#B91C1C]">
+                {contextError}
+              </div>
+            ) : null}
+            {route === "references" && referenceError ? (
+              <div className="mb-4 rounded-md border border-[#FCA5A5] bg-[#FEF2F2] px-3 py-2 text-sm text-[#B91C1C]">
+                {referenceError}
               </div>
             ) : null}
             {route === "somedays" && somedayError ? (
@@ -1261,6 +1542,34 @@ export default function App() {
                 onOpen={(id, inbox) => void openInboxDrawer("edit", id, inbox)}
                 onDelete={(inbox) => void onDeleteInbox(inbox)}
               />
+            ) : route === "contexts" ? (
+              <ContextsPage
+                items={contexts}
+                loading={contextLoading}
+                pageSize={contextPageSize}
+                offset={contextOffset}
+                hasNext={contextHasNext}
+                onPageSizeChange={setContextPageSize}
+                onPrevPage={() => setContextOffset((v) => Math.max(0, v - contextPageSize))}
+                onNextPage={() => setContextOffset((v) => v + contextPageSize)}
+                onRefresh={() => void refreshContexts()}
+                onOpen={(id, contextItem) => void openContextDrawer("edit", id, contextItem)}
+                onDelete={(contextItem) => void onDeleteContextItem(contextItem)}
+              />
+            ) : route === "references" ? (
+              <ReferencesPage
+                items={references}
+                loading={referenceLoading}
+                pageSize={referencePageSize}
+                offset={referenceOffset}
+                hasNext={referenceHasNext}
+                onPageSizeChange={setReferencePageSize}
+                onPrevPage={() => setReferenceOffset((v) => Math.max(0, v - referencePageSize))}
+                onNextPage={() => setReferenceOffset((v) => v + referencePageSize)}
+                onRefresh={() => void refreshReferences()}
+                onOpen={(id, reference) => void openReferenceDrawer("edit", id, reference)}
+                onDelete={(reference) => void onDeleteReferenceItem(reference)}
+              />
             ) : route === "schedule" ? (
               <SchedulePage
                 tasks={scheduleTasks}
@@ -1303,16 +1612,24 @@ export default function App() {
           </main>
         </div>
 
-        {drawer.type === "project" || drawer.type === "inbox" ? (
+        {drawer.type === "project" || drawer.type === "inbox" || drawer.type === "context" || drawer.type === "reference" ? (
           <CenteredDialog
             title={
               drawer.type === "project"
                 ? drawer.mode === "create"
                   ? "新建项目"
                   : "项目详情"
-                : drawer.mode === "create"
-                  ? "新建收集箱"
-                  : "修改收集箱"
+                : drawer.type === "inbox"
+                  ? drawer.mode === "create"
+                    ? "新建收集箱"
+                    : "修改收集箱"
+                  : drawer.type === "context"
+                    ? drawer.mode === "create"
+                      ? "新建情境"
+                      : "修改情境"
+                    : drawer.mode === "create"
+                      ? "新建资料"
+                      : "修改资料"
             }
             onClose={closeDrawer}
             action={
@@ -1348,7 +1665,7 @@ export default function App() {
                   closeDrawer();
                 }}
               />
-            ) : (
+            ) : drawer.type === "inbox" ? (
               <InboxDrawerForm
                 inbox={drawerInbox}
                 mode={drawer.mode}
@@ -1356,6 +1673,26 @@ export default function App() {
                 onDelete={async () => {
                   if (!drawerInbox) return;
                   await onDeleteInbox(drawerInbox);
+                }}
+              />
+            ) : drawer.type === "context" ? (
+              <ContextDrawerForm
+                contextItem={drawerContext}
+                mode={drawer.mode}
+                onChange={setDrawerContext}
+                onDelete={async () => {
+                  if (!drawerContext) return;
+                  await onDeleteContextItem(drawerContext);
+                }}
+              />
+            ) : (
+              <ReferenceDrawerForm
+                reference={drawerReference}
+                mode={drawer.mode}
+                onChange={setDrawerReference}
+                onDelete={async () => {
+                  if (!drawerReference) return;
+                  await onDeleteReferenceItem(drawerReference);
                 }}
               />
             )}
@@ -1436,6 +1773,8 @@ export default function App() {
     setDrawerSaving(true);
     setError("");
     setInboxError("");
+    setContextError("");
+    setReferenceError("");
     setSomedayError("");
     setWaitingListError("");
     setScheduleError("");
@@ -1551,6 +1890,49 @@ export default function App() {
         return;
       }
 
+      if (drawer.type === "context") {
+        if (!drawerContext) return;
+        const title = drawerContext.title.trim();
+        const description = drawerContext.description;
+        const color = drawerContext.color.trim().toLowerCase();
+        if (!title) throw new Error("情境标题不能为空");
+        if (!/^#[0-9a-f]{6}$/.test(color)) throw new Error("情境颜色必须为 #RRGGBB 格式");
+        if (drawer.mode === "create") {
+          await createContext({ title, description, color });
+        } else {
+          await updateContext(drawerContext.id, { title, description, color });
+        }
+        await refreshContexts();
+        closeDrawer();
+        return;
+      }
+
+      if (drawer.type === "reference") {
+        if (!drawerReference) return;
+        const title = drawerReference.title.trim();
+        const description = drawerReference.description;
+        const references = drawerReference.references
+          .map((reference) => ({ title: reference.title.trim(), url: reference.url.trim() }))
+          .filter((reference) => reference.title || reference.url);
+        if (!title) throw new Error("资料标题不能为空");
+        for (const reference of references) {
+          if (!reference.title || !reference.url) {
+            throw new Error("资料链接的标题和 URL 需要同时填写");
+          }
+          if (!isHttpUrl(reference.url)) {
+            throw new Error("资料链接必须以 http:// 或 https:// 开头");
+          }
+        }
+        if (drawer.mode === "create") {
+          await createReference({ title, description, references });
+        } else {
+          await updateReference(drawerReference.id, { title, description, references });
+        }
+        await refreshReferences();
+        closeDrawer();
+        return;
+      }
+
       if (drawer.type === "someday") {
         if (!drawerSomeday) return;
         if (drawer.mode === "create") {
@@ -1596,6 +1978,10 @@ export default function App() {
       const message = String(e);
       if (drawer.type === "inbox") {
         setInboxError(message);
+      } else if (drawer.type === "context") {
+        setContextError(message);
+      } else if (drawer.type === "reference") {
+        setReferenceError(message);
       } else if (drawer.type === "someday") {
         setSomedayError(message);
       } else if (drawer.type === "waitingList") {
@@ -1734,6 +2120,58 @@ const MIN_INBOX_COLUMN_WIDTHS: InboxColumnWidths = {
   actions: 120,
 };
 
+type ContextColumnKey = "title" | "color" | "updatedAt" | "actions";
+
+type ContextColumnWidths = Record<ContextColumnKey, number>;
+
+type ContextResizeState = {
+  key: ContextColumnKey;
+  startX: number;
+  startWidth: number;
+} | null;
+
+const DEFAULT_CONTEXT_COLUMN_WIDTHS: ContextColumnWidths = {
+  title: 360,
+  color: 180,
+  updatedAt: 180,
+  actions: 140,
+};
+
+const CONTEXT_COLUMN_WIDTHS_STORAGE_KEY = "multivac:context-column-widths";
+
+const MIN_CONTEXT_COLUMN_WIDTHS: ContextColumnWidths = {
+  title: 220,
+  color: 140,
+  updatedAt: 140,
+  actions: 120,
+};
+
+type ReferenceColumnKey = "title" | "count" | "updatedAt" | "actions";
+
+type ReferenceColumnWidths = Record<ReferenceColumnKey, number>;
+
+type ReferenceResizeState = {
+  key: ReferenceColumnKey;
+  startX: number;
+  startWidth: number;
+} | null;
+
+const DEFAULT_REFERENCE_COLUMN_WIDTHS: ReferenceColumnWidths = {
+  title: 420,
+  count: 120,
+  updatedAt: 180,
+  actions: 140,
+};
+
+const REFERENCE_COLUMN_WIDTHS_STORAGE_KEY = "multivac:reference-column-widths";
+
+const MIN_REFERENCE_COLUMN_WIDTHS: ReferenceColumnWidths = {
+  title: 240,
+  count: 100,
+  updatedAt: 140,
+  actions: 120,
+};
+
 type SomedayColumnKey = "name" | "description" | "updatedAt" | "actions";
 
 type SomedayColumnWidths = Record<SomedayColumnKey, number>;
@@ -1852,6 +2290,48 @@ function loadInboxColumnWidths(): InboxColumnWidths {
     return normalizeInboxColumnWidths(JSON.parse(raw));
   } catch {
     return DEFAULT_INBOX_COLUMN_WIDTHS;
+  }
+}
+
+function normalizeContextColumnWidths(value: unknown): ContextColumnWidths {
+  const widths = typeof value === "object" && value !== null ? value as Partial<Record<ContextColumnKey, unknown>> : {};
+  return {
+    title: typeof widths.title === "number" ? Math.max(MIN_CONTEXT_COLUMN_WIDTHS.title, widths.title) : DEFAULT_CONTEXT_COLUMN_WIDTHS.title,
+    color: typeof widths.color === "number" ? Math.max(MIN_CONTEXT_COLUMN_WIDTHS.color, widths.color) : DEFAULT_CONTEXT_COLUMN_WIDTHS.color,
+    updatedAt: typeof widths.updatedAt === "number" ? Math.max(MIN_CONTEXT_COLUMN_WIDTHS.updatedAt, widths.updatedAt) : DEFAULT_CONTEXT_COLUMN_WIDTHS.updatedAt,
+    actions: typeof widths.actions === "number" ? Math.max(MIN_CONTEXT_COLUMN_WIDTHS.actions, widths.actions) : DEFAULT_CONTEXT_COLUMN_WIDTHS.actions,
+  };
+}
+
+function loadContextColumnWidths(): ContextColumnWidths {
+  if (typeof window === "undefined") return DEFAULT_CONTEXT_COLUMN_WIDTHS;
+  try {
+    const raw = window.localStorage.getItem(CONTEXT_COLUMN_WIDTHS_STORAGE_KEY);
+    if (!raw) return DEFAULT_CONTEXT_COLUMN_WIDTHS;
+    return normalizeContextColumnWidths(JSON.parse(raw));
+  } catch {
+    return DEFAULT_CONTEXT_COLUMN_WIDTHS;
+  }
+}
+
+function normalizeReferenceColumnWidths(value: unknown): ReferenceColumnWidths {
+  const widths = typeof value === "object" && value !== null ? value as Partial<Record<ReferenceColumnKey, unknown>> : {};
+  return {
+    title: typeof widths.title === "number" ? Math.max(MIN_REFERENCE_COLUMN_WIDTHS.title, widths.title) : DEFAULT_REFERENCE_COLUMN_WIDTHS.title,
+    count: typeof widths.count === "number" ? Math.max(MIN_REFERENCE_COLUMN_WIDTHS.count, widths.count) : DEFAULT_REFERENCE_COLUMN_WIDTHS.count,
+    updatedAt: typeof widths.updatedAt === "number" ? Math.max(MIN_REFERENCE_COLUMN_WIDTHS.updatedAt, widths.updatedAt) : DEFAULT_REFERENCE_COLUMN_WIDTHS.updatedAt,
+    actions: typeof widths.actions === "number" ? Math.max(MIN_REFERENCE_COLUMN_WIDTHS.actions, widths.actions) : DEFAULT_REFERENCE_COLUMN_WIDTHS.actions,
+  };
+}
+
+function loadReferenceColumnWidths(): ReferenceColumnWidths {
+  if (typeof window === "undefined") return DEFAULT_REFERENCE_COLUMN_WIDTHS;
+  try {
+    const raw = window.localStorage.getItem(REFERENCE_COLUMN_WIDTHS_STORAGE_KEY);
+    if (!raw) return DEFAULT_REFERENCE_COLUMN_WIDTHS;
+    return normalizeReferenceColumnWidths(JSON.parse(raw));
+  } catch {
+    return DEFAULT_REFERENCE_COLUMN_WIDTHS;
   }
 }
 
@@ -2230,6 +2710,370 @@ function InboxesPage(props: {
                       title="暂未实现"
                     >
                       澄清
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="flex items-center justify-between rounded-lg border border-[#E6E8F0] bg-white px-4 py-3 text-sm">
+        <div className="flex items-center gap-2 text-[#6B7280]">
+          <span>每页显示</span>
+          <select
+            className="rounded-md border border-[#E6E8F0] bg-white px-2 py-1 text-sm text-[#374151]"
+            value={props.pageSize}
+            onChange={(e) => props.onPageSizeChange(Number(e.target.value))}
+            disabled={props.loading}
+          >
+            {PAGE_SIZE_OPTIONS.map((size) => (
+              <option key={size} value={size}>
+                {size}
+              </option>
+            ))}
+          </select>
+          <span>第 {pageNumber(props.offset, props.pageSize)} 页</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="rounded-md border border-[#E6E8F0] bg-white px-3 py-1 text-sm text-[#374151] disabled:cursor-not-allowed disabled:text-[#9CA3AF]"
+            onClick={props.onPrevPage}
+            disabled={props.loading || props.offset === 0}
+          >
+            上一页
+          </button>
+          <button
+            type="button"
+            className="rounded-md border border-[#E6E8F0] bg-white px-3 py-1 text-sm text-[#374151] disabled:cursor-not-allowed disabled:text-[#9CA3AF]"
+            onClick={props.onNextPage}
+            disabled={props.loading || !props.hasNext}
+          >
+            下一页
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ContextsPage(props: {
+  items: ManagedContext[];
+  loading: boolean;
+  pageSize: number;
+  offset: number;
+  hasNext: boolean;
+  onPageSizeChange: (v: number) => void;
+  onPrevPage: () => void;
+  onNextPage: () => void;
+  onRefresh: () => void;
+  onOpen: (id: string, contextItem?: ManagedContext) => void;
+  onDelete: (contextItem: ManagedContext) => void;
+}) {
+  const [columnWidths, setColumnWidths] = useState<ContextColumnWidths>(() => loadContextColumnWidths());
+
+  useEffect(() => {
+    window.localStorage.setItem(CONTEXT_COLUMN_WIDTHS_STORAGE_KEY, JSON.stringify(columnWidths));
+  }, [columnWidths]);
+
+  function startResize(key: ContextColumnKey, event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+
+    const state: ContextResizeState = {
+      key,
+      startX: event.clientX,
+      startWidth: columnWidths[key],
+    };
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const delta = moveEvent.clientX - state.startX;
+      const nextWidth = Math.max(MIN_CONTEXT_COLUMN_WIDTHS[key], state.startWidth + delta);
+      setColumnWidths((current) => ({ ...current, [key]: nextWidth }));
+    };
+
+    const stopResize = () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", stopResize);
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", stopResize);
+  }
+
+  function headerCell(label: string, key: ContextColumnKey, alignRight?: boolean) {
+    const showResizeMarker = key !== "actions";
+    return (
+      <th className={classNames("relative px-4 py-3", alignRight && "text-right")}>
+        <div className={classNames("relative", alignRight && "pr-3")}>{label}</div>
+        {showResizeMarker ? (
+          <div className="pointer-events-none absolute right-0 top-1/2 h-5 -translate-y-1/2 border-r border-[#D1D5DB]" />
+        ) : null}
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          className="absolute right-0 top-0 h-full w-2 cursor-col-resize hover:bg-[#EEF2FF]/80"
+          onPointerDown={(event) => startResize(key, event)}
+        />
+      </th>
+    );
+  }
+
+  return (
+    <div className="mx-auto grid w-full max-w-7xl gap-3">
+      <div className="flex items-center justify-between">
+        <div className="text-lg font-semibold text-[#111827]">情境列表</div>
+        <div className="flex items-center gap-2">
+          <button
+            className="flex items-center gap-1 rounded-md border border-[#E6E8F0] bg-white px-3 py-1 text-sm text-[#374151] hover:bg-[#F5F6FA]"
+            type="button"
+            onClick={props.onRefresh}
+          >
+            <IconRefresh />
+            刷新
+          </button>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto overflow-y-hidden rounded-lg border border-[#E6E8F0] bg-white">
+        <table className="w-full min-w-[920px] table-fixed text-left text-sm">
+          <colgroup>
+            <col style={{ width: columnWidths.title }} />
+            <col style={{ width: columnWidths.color }} />
+            <col style={{ width: columnWidths.updatedAt }} />
+            <col style={{ width: columnWidths.actions }} />
+          </colgroup>
+          <thead className="bg-[#F9FAFB] text-xs text-[#6B7280]">
+            <tr>
+              {headerCell("标题", "title")}
+              {headerCell("颜色", "color")}
+              {headerCell("更新时间", "updatedAt")}
+              {headerCell("操作", "actions", true)}
+            </tr>
+          </thead>
+          <tbody>
+            {props.items.length === 0 && !props.loading ? (
+              <tr>
+                <td colSpan={4} className="px-4 py-10 text-center text-[#6B7280]">
+                  暂无情境
+                </td>
+              </tr>
+            ) : null}
+            {props.items.map((contextItem) => (
+              <tr key={contextItem.id} className="border-t border-[#E6E8F0] hover:bg-[#F9FAFB]">
+                <td className="px-4 py-3">
+                  <div className="font-medium text-[#111827]">{contextItem.title}</div>
+                  <div className="mt-1 line-clamp-2 text-sm text-[#6B7280]">{contextItem.description || "-"}</div>
+                </td>
+                <td className="px-4 py-3 text-[#6B7280]">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="inline-block h-4 w-4 rounded-full border border-[#D1D5DB]"
+                      style={{ backgroundColor: contextItem.color }}
+                    />
+                    <span>{contextItem.color}</span>
+                  </div>
+                </td>
+                <td className="px-4 py-3 text-[#6B7280]">{formatDate(contextItem.updatedAt)}</td>
+                <td className="px-4 py-3 text-right">
+                  <div className="flex items-center justify-end gap-3 text-sm font-medium">
+                    <button
+                      type="button"
+                      className="text-[#4F46E5] hover:underline"
+                      onClick={() => props.onOpen(contextItem.id, contextItem)}
+                    >
+                      修改
+                    </button>
+                    <button
+                      type="button"
+                      className="text-[#DC2626] hover:underline"
+                      onClick={() => props.onDelete(contextItem)}
+                    >
+                      删除
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="flex items-center justify-between rounded-lg border border-[#E6E8F0] bg-white px-4 py-3 text-sm">
+        <div className="flex items-center gap-2 text-[#6B7280]">
+          <span>每页显示</span>
+          <select
+            className="rounded-md border border-[#E6E8F0] bg-white px-2 py-1 text-sm text-[#374151]"
+            value={props.pageSize}
+            onChange={(e) => props.onPageSizeChange(Number(e.target.value))}
+            disabled={props.loading}
+          >
+            {PAGE_SIZE_OPTIONS.map((size) => (
+              <option key={size} value={size}>
+                {size}
+              </option>
+            ))}
+          </select>
+          <span>第 {pageNumber(props.offset, props.pageSize)} 页</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="rounded-md border border-[#E6E8F0] bg-white px-3 py-1 text-sm text-[#374151] disabled:cursor-not-allowed disabled:text-[#9CA3AF]"
+            onClick={props.onPrevPage}
+            disabled={props.loading || props.offset === 0}
+          >
+            上一页
+          </button>
+          <button
+            type="button"
+            className="rounded-md border border-[#E6E8F0] bg-white px-3 py-1 text-sm text-[#374151] disabled:cursor-not-allowed disabled:text-[#9CA3AF]"
+            onClick={props.onNextPage}
+            disabled={props.loading || !props.hasNext}
+          >
+            下一页
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReferencesPage(props: {
+  items: ManagedReference[];
+  loading: boolean;
+  pageSize: number;
+  offset: number;
+  hasNext: boolean;
+  onPageSizeChange: (v: number) => void;
+  onPrevPage: () => void;
+  onNextPage: () => void;
+  onRefresh: () => void;
+  onOpen: (id: string, reference?: ManagedReference) => void;
+  onDelete: (reference: ManagedReference) => void;
+}) {
+  const [columnWidths, setColumnWidths] = useState<ReferenceColumnWidths>(() => loadReferenceColumnWidths());
+
+  useEffect(() => {
+    window.localStorage.setItem(REFERENCE_COLUMN_WIDTHS_STORAGE_KEY, JSON.stringify(columnWidths));
+  }, [columnWidths]);
+
+  function startResize(key: ReferenceColumnKey, event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+
+    const state: ReferenceResizeState = {
+      key,
+      startX: event.clientX,
+      startWidth: columnWidths[key],
+    };
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const delta = moveEvent.clientX - state.startX;
+      const nextWidth = Math.max(MIN_REFERENCE_COLUMN_WIDTHS[key], state.startWidth + delta);
+      setColumnWidths((current) => ({ ...current, [key]: nextWidth }));
+    };
+
+    const stopResize = () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", stopResize);
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", stopResize);
+  }
+
+  function headerCell(label: string, key: ReferenceColumnKey, alignRight?: boolean) {
+    const showResizeMarker = key !== "actions";
+    return (
+      <th className={classNames("relative px-4 py-3", alignRight && "text-right")}>
+        <div className={classNames("relative", alignRight && "pr-3")}>{label}</div>
+        {showResizeMarker ? (
+          <div className="pointer-events-none absolute right-0 top-1/2 h-5 -translate-y-1/2 border-r border-[#D1D5DB]" />
+        ) : null}
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          className="absolute right-0 top-0 h-full w-2 cursor-col-resize hover:bg-[#EEF2FF]/80"
+          onPointerDown={(event) => startResize(key, event)}
+        />
+      </th>
+    );
+  }
+
+  return (
+    <div className="mx-auto grid w-full max-w-7xl gap-3">
+      <div className="flex items-center justify-between">
+        <div className="text-lg font-semibold text-[#111827]">资料列表</div>
+        <div className="flex items-center gap-2">
+          <button
+            className="flex items-center gap-1 rounded-md border border-[#E6E8F0] bg-white px-3 py-1 text-sm text-[#374151] hover:bg-[#F5F6FA]"
+            type="button"
+            onClick={props.onRefresh}
+          >
+            <IconRefresh />
+            刷新
+          </button>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto overflow-y-hidden rounded-lg border border-[#E6E8F0] bg-white">
+        <table className="w-full min-w-[920px] table-fixed text-left text-sm">
+          <colgroup>
+            <col style={{ width: columnWidths.title }} />
+            <col style={{ width: columnWidths.count }} />
+            <col style={{ width: columnWidths.updatedAt }} />
+            <col style={{ width: columnWidths.actions }} />
+          </colgroup>
+          <thead className="bg-[#F9FAFB] text-xs text-[#6B7280]">
+            <tr>
+              {headerCell("标题", "title")}
+              {headerCell("链接数", "count")}
+              {headerCell("更新时间", "updatedAt")}
+              {headerCell("操作", "actions", true)}
+            </tr>
+          </thead>
+          <tbody>
+            {props.items.length === 0 && !props.loading ? (
+              <tr>
+                <td colSpan={4} className="px-4 py-10 text-center text-[#6B7280]">
+                  暂无资料
+                </td>
+              </tr>
+            ) : null}
+            {props.items.map((reference) => (
+              <tr key={reference.id} className="border-t border-[#E6E8F0] hover:bg-[#F9FAFB]">
+                <td className="px-4 py-3">
+                  <div className="font-medium text-[#111827]">{reference.title}</div>
+                  <div className="mt-1 line-clamp-2 text-sm text-[#6B7280]">{reference.description || "-"}</div>
+                </td>
+                <td className="px-4 py-3 text-[#6B7280]">{reference.references.length}</td>
+                <td className="px-4 py-3 text-[#6B7280]">{formatDate(reference.updatedAt)}</td>
+                <td className="px-4 py-3 text-right">
+                  <div className="flex items-center justify-end gap-3 text-sm font-medium">
+                    <button
+                      type="button"
+                      className="text-[#4F46E5] hover:underline"
+                      onClick={() => props.onOpen(reference.id, reference)}
+                    >
+                      修改
+                    </button>
+                    <button
+                      type="button"
+                      className="text-[#DC2626] hover:underline"
+                      onClick={() => props.onDelete(reference)}
+                    >
+                      删除
                     </button>
                   </div>
                 </td>
@@ -3423,7 +4267,7 @@ function ProjectDrawerForm(props: {
             const hasValidPair = Boolean(title && url);
             const hasValidUrl = !url || isProjectReferenceUrl(url);
             return (
-              <div key={`${index}-${reference.title}-${reference.URL}`} className="grid gap-2 rounded-md border border-[#E6E8F0] bg-white p-3">
+              <div key={index} className="grid gap-2 rounded-md border border-[#E6E8F0] bg-white p-3">
                 <div className="grid gap-2 md:grid-cols-[1fr_1fr_auto] md:items-start">
                   <TextInput
                     value={reference.title}
@@ -3520,6 +4364,147 @@ function InboxDrawerForm(props: {
           contentClassName="project-md-editor__content--tall"
         />
       </Field>
+
+      {props.mode === "edit" ? (
+        <div className="pt-2">
+          <button
+            className="rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm text-[#DC2626] hover:bg-[#F5F6FA]"
+            type="button"
+            onClick={() => void props.onDelete()}
+          >
+            删除
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ContextDrawerForm(props: {
+  contextItem: ContextDrawerState | null;
+  mode: "create" | "edit";
+  onChange: (contextItem: ContextDrawerState | null) => void;
+  onDelete: () => Promise<void>;
+}) {
+  const contextItem = props.contextItem;
+  if (!contextItem) return <div className="px-4 py-6 text-sm text-[#6B7280]">无数据</div>;
+  return (
+    <div className="grid gap-3 px-4 py-4">
+      <Field label="情境标题">
+        <TextInput
+          value={contextItem.title}
+          onChange={(v) => props.onChange({ ...contextItem, title: v })}
+          placeholder="例如：办公室、外出、深度工作"
+        />
+      </Field>
+      <Field label="颜色">
+        <div className="flex items-center gap-3">
+          <input
+            className="h-10 w-16 rounded-md border border-[#E6E8F0] bg-white px-1 py-1"
+            type="color"
+            value={contextItem.color}
+            onChange={(e) => props.onChange({ ...contextItem, color: e.target.value.toLowerCase() })}
+          />
+          <TextInput
+            value={contextItem.color}
+            onChange={(v) => props.onChange({ ...contextItem, color: v.toLowerCase() })}
+            placeholder="#4f46e5"
+          />
+        </div>
+      </Field>
+      <Field label="详细描述（Markdown）">
+        <MarkdownEditor
+          value={contextItem.description}
+          onChange={(v) => props.onChange({ ...contextItem, description: v })}
+          placeholder="输入情境说明，可自行使用 Markdown 组织结构"
+          contentClassName="project-md-editor__content--tall"
+        />
+      </Field>
+
+      {props.mode === "edit" ? (
+        <div className="pt-2">
+          <button
+            className="rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm text-[#DC2626] hover:bg-[#F5F6FA]"
+            type="button"
+            onClick={() => void props.onDelete()}
+          >
+            删除
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ReferenceDrawerForm(props: {
+  reference: ReferenceDrawerState | null;
+  mode: "create" | "edit";
+  onChange: (reference: ReferenceDrawerState | null) => void;
+  onDelete: () => Promise<void>;
+}) {
+  const reference = props.reference;
+  if (!reference) return <div className="px-4 py-6 text-sm text-[#6B7280]">无数据</div>;
+  return (
+    <div className="grid gap-3 px-4 py-4">
+      <Field label="资料标题">
+        <TextInput
+          value={reference.title}
+          onChange={(v) => props.onChange({ ...reference, title: v })}
+          placeholder="例如：API 文档、竞品资料、设计规范"
+        />
+      </Field>
+      <Field label="详细描述（Markdown）">
+        <MarkdownEditor
+          value={reference.description}
+          onChange={(v) => props.onChange({ ...reference, description: v })}
+          placeholder="输入资料说明，可自行使用 Markdown 组织结构"
+          contentClassName="project-md-editor__content--tall"
+        />
+      </Field>
+      <div className="grid gap-3 rounded-lg border border-[#E6E8F0] bg-[#FBFCFE] px-4 py-4">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-medium text-[#111827]">资料链接</span>
+          <button
+            type="button"
+            className="rounded-md border border-[#E6E8F0] bg-white px-3 py-1 text-sm text-[#374151] hover:bg-[#F5F6FA]"
+            onClick={() => props.onChange({ ...reference, references: [...reference.references, createEmptyReferenceLink()] })}
+          >
+            + 添加链接
+          </button>
+        </div>
+        {reference.references.length === 0 ? <div className="text-sm text-[#9CA3AF]">暂无链接</div> : null}
+        {reference.references.map((item, index) => (
+          <div key={index} className="grid gap-3 rounded-lg border border-[#E6E8F0] bg-white p-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)_auto] md:items-end">
+            <Field label="标题">
+              <TextInput
+                value={item.title}
+                onChange={(value) => {
+                  const references = reference.references.map((current, i) => (i === index ? { ...current, title: value } : current));
+                  props.onChange({ ...reference, references });
+                }}
+                placeholder="例如：官方文档"
+              />
+            </Field>
+            <Field label="URL">
+              <TextInput
+                value={item.url}
+                onChange={(value) => {
+                  const references = reference.references.map((current, i) => (i === index ? { ...current, url: value } : current));
+                  props.onChange({ ...reference, references });
+                }}
+                placeholder="https://example.com"
+              />
+            </Field>
+            <button
+              type="button"
+              className="rounded-md border border-[#F3D3D3] bg-white px-3 py-2 text-sm text-[#DC2626] hover:bg-[#FEF2F2]"
+              onClick={() => props.onChange({ ...reference, references: reference.references.filter((_, i) => i !== index) })}
+            >
+              删除
+            </button>
+          </div>
+        ))}
+      </div>
 
       {props.mode === "edit" ? (
         <div className="pt-2">
