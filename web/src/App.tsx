@@ -31,10 +31,9 @@ import {
   deleteTask,
   getTask,
   listTasks,
-  setTaskStatus,
   updateTask,
 } from "./lib/tasks";
-import type { SortDir, Task, TaskPriority, TaskStatus } from "./lib/tasks";
+import type { SortDir, Task } from "./lib/tasks";
 import {
   createInbox,
   deleteInbox,
@@ -108,8 +107,6 @@ const PROJECT_STATUS_TRANSITIONS: Record<ProjectStatus, ProjectStatus[]> = {
   Hold: ["Hold", "Active"],
   Completed: ["Completed"],
 };
-const TASK_STATUSES: TaskStatus[] = ["Todo", "InProgress", "Done", "Canceled"];
-const TASK_PRIORITIES: TaskPriority[] = ["P0", "High", "Medium", "Low"];
 const PAGE_SIZE_OPTIONS = [10, 20, 50];
 const LAST_TASK_PROJECT_STORAGE_KEY = "multivac:last-task-project-id";
 const EMPTY_TASK_PROJECT_SENTINEL = "__NONE__";
@@ -263,35 +260,6 @@ function projectStatusLabel(s: ProjectStatus): string {
   }
 }
 
-function taskStatusLabel(s: TaskStatus): string {
-  switch (s) {
-    case "Todo":
-      return "待办";
-    case "InProgress":
-      return "进行中";
-    case "Done":
-      return "已完成";
-    case "Canceled":
-      return "已取消";
-    default:
-      return s;
-  }
-}
-
-function taskPriorityLabel(p: TaskPriority): string {
-  switch (p) {
-    case "P0":
-      return "P0";
-    case "High":
-      return "高";
-    case "Medium":
-      return "中";
-    case "Low":
-      return "低";
-    default:
-      return p;
-  }
-}
 
 function pageNumber(offset: number, pageSize: number): number {
   return Math.floor(offset / pageSize) + 1;
@@ -304,8 +272,6 @@ type ScheduleEntry = {
   dateISO: string;
   projectId?: string;
   owner?: string;
-  priority?: TaskPriority;
-  taskStatus?: TaskStatus;
   task?: Task;
   waitingList?: WaitingList;
 };
@@ -320,8 +286,6 @@ function toScheduleEntries(tasks: Task[], waitingLists: WaitingList[]): Schedule
         title: task.name,
         dateISO: task.dueAt!,
         projectId: task.projectId,
-        priority: task.priority,
-        taskStatus: task.status,
         task,
       }),
     );
@@ -684,7 +648,6 @@ export default function App() {
 
   // Tasks page filters
   const [taskProjectId, setTaskProjectId] = useState<string>("");
-  const [taskStatusFilter, setTaskStatusFilter] = useState<TaskStatus | "">("");
   const [taskListVersion, setTaskListVersion] = useState(0);
   const [highlightTaskId, setHighlightTaskId] = useState<string | null>(null);
   const [lastTaskProjectId, setLastTaskProjectId] = useState<string | null>(() => {
@@ -938,7 +901,7 @@ export default function App() {
 
   const pageLabelMap: Record<Route, string> = {
     projects: "项目管理",
-    tasks: "任务管理",
+    tasks: "下一步",
     inboxes: "收集箱管理",
     contexts: "情境管理",
     references: "资料管理",
@@ -1364,7 +1327,7 @@ export default function App() {
             <NavItemLight
               active={route === "tasks"}
               icon={<IconTask />}
-              label="任务"
+              label="下一步"
               onClick={() => {
                 setRoute("tasks");
                 setSearch("");
@@ -1539,14 +1502,12 @@ export default function App() {
               <TasksPageNew
                 projects={allProjects}
                 projectId={taskProjectId}
-                status={taskStatusFilter}
                 search={normalizedSearch}
                 contextFilterInput={contextFilterInput}
                 tagFilterInput={tagFilterInput}
                 version={taskListVersion}
                 highlightTaskId={highlightTaskId}
                 onProjectId={setTaskProjectId}
-                onStatus={setTaskStatusFilter}
                 onOpen={(id, t) => void openTaskDrawer("edit", id, t)}
               />
             ) : route === "inboxes" ? (
@@ -1721,7 +1682,7 @@ export default function App() {
           </CenteredDialog>
         ) : drawer.type !== "none" ? (
           <Drawer
-            title={drawer.type === "task" ? "任务详情" : drawer.type === "someday" ? "将来/也许详情" : "等待列表详情"}
+            title={drawer.type === "task" ? "下一步详情" : drawer.type === "someday" ? "将来/也许详情" : "等待列表详情"}
             onClose={closeDrawer}
             action={
               <button
@@ -1749,7 +1710,7 @@ export default function App() {
                 onChange={setDrawerTask}
                 onDelete={async () => {
                   if (!drawerTask) return;
-                  if (!confirm(`确定删除 Task: ${drawerTask.name} ?`)) return;
+                  if (!confirm(`确定删除下一步: ${drawerTask.name} ?`)) return;
                   await deleteTask(drawerTask.id);
                   setTaskListVersion((v) => v + 1);
                   setDrawer({ type: "none" });
@@ -1864,7 +1825,6 @@ export default function App() {
             context: drawerTask.context,
             details: drawerTask.details,
             priority: drawerTask.priority,
-            status: drawerTask.status,
             dueAt: dueISO,
           });
           setLastTaskProjectId(drawerTask.projectId ?? "");
@@ -1873,7 +1833,7 @@ export default function App() {
           closeDrawer();
           return;
         }
-        const t = await updateTask(drawerTask.id, {
+        await updateTask(drawerTask.id, {
           projectId: drawerTask.projectId || undefined,
           name: drawerTask.name,
           description: drawerTask.description,
@@ -1884,9 +1844,6 @@ export default function App() {
           dueAt: dueISO ?? "",
         });
         setLastTaskProjectId(drawerTask.projectId ?? "");
-        if (t.status !== drawerTask.status) {
-          await setTaskStatus(drawerTask.id, drawerTask.status);
-        }
         setTaskListVersion((v) => v + 1);
         setDrawer({ type: "none" });
         setDrawerTask(null);
@@ -2086,7 +2043,7 @@ const MIN_PROJECT_COLUMN_WIDTHS: ProjectColumnWidths = {
   actions: 100,
 };
 
-type TaskColumnKey = "name" | "project" | "priority" | "status" | "dueAt" | "actions";
+type TaskColumnKey = "name" | "project" | "dueAt" | "actions";
 
 type TaskColumnWidths = Record<TaskColumnKey, number>;
 
@@ -2097,10 +2054,8 @@ type TaskResizeState = {
 } | null;
 
 const DEFAULT_TASK_COLUMN_WIDTHS: TaskColumnWidths = {
-  name: 280,
-  project: 220,
-  priority: 120,
-  status: 140,
+  name: 360,
+  project: 280,
   dueAt: 180,
   actions: 120,
 };
@@ -2108,10 +2063,8 @@ const DEFAULT_TASK_COLUMN_WIDTHS: TaskColumnWidths = {
 const TASK_COLUMN_WIDTHS_STORAGE_KEY = "multivac:task-column-widths";
 
 const MIN_TASK_COLUMN_WIDTHS: TaskColumnWidths = {
-  name: 180,
-  project: 160,
-  priority: 100,
-  status: 120,
+  name: 220,
+  project: 180,
   dueAt: 140,
   actions: 100,
 };
@@ -2276,8 +2229,6 @@ function normalizeTaskColumnWidths(value: unknown): TaskColumnWidths {
   return {
     name: typeof widths.name === "number" ? Math.max(MIN_TASK_COLUMN_WIDTHS.name, widths.name) : DEFAULT_TASK_COLUMN_WIDTHS.name,
     project: typeof widths.project === "number" ? Math.max(MIN_TASK_COLUMN_WIDTHS.project, widths.project) : DEFAULT_TASK_COLUMN_WIDTHS.project,
-    priority: typeof widths.priority === "number" ? Math.max(MIN_TASK_COLUMN_WIDTHS.priority, widths.priority) : DEFAULT_TASK_COLUMN_WIDTHS.priority,
-    status: typeof widths.status === "number" ? Math.max(MIN_TASK_COLUMN_WIDTHS.status, widths.status) : DEFAULT_TASK_COLUMN_WIDTHS.status,
     dueAt: typeof widths.dueAt === "number" ? Math.max(MIN_TASK_COLUMN_WIDTHS.dueAt, widths.dueAt) : DEFAULT_TASK_COLUMN_WIDTHS.dueAt,
     actions: typeof widths.actions === "number" ? Math.max(MIN_TASK_COLUMN_WIDTHS.actions, widths.actions) : DEFAULT_TASK_COLUMN_WIDTHS.actions,
   };
@@ -3388,9 +3339,6 @@ function SchedulePage(props: {
       >
         <div className="flex items-center gap-2">
           <Badge color={entryBadgeColor(entry)}>{entryBadgeLabel(entry)}</Badge>
-          {entry.kind === "Task" && entry.priority ? (
-            <Badge color="gray">{taskPriorityLabel(entry.priority)}</Badge>
-          ) : null}
         </div>
         <div className={classNames("font-medium text-[#111827]", compact ? "text-xs" : "text-sm")}>
           {entry.title}
@@ -3518,14 +3466,12 @@ function SchedulePage(props: {
 function TasksPageNew(props: {
   projects: Project[];
   projectId: string;
-  status: TaskStatus | "";
   search: string;
   contextFilterInput: string;
   tagFilterInput: string;
   version: number;
   highlightTaskId: string | null;
   onProjectId: (v: string) => void;
-  onStatus: (v: TaskStatus | "") => void;
   onOpen: (id: string, t?: Task) => void;
 }) {
   const [loading, setLoading] = useState(false);
@@ -3616,7 +3562,6 @@ function TasksPageNew(props: {
     try {
       const list = await listTasks({
         projectId: props.projectId || undefined,
-        status: props.status || undefined,
         search: props.search || undefined,
         contexts: parseLabelFilterInput(props.contextFilterInput),
         tags: parseLabelFilterInput(props.tagFilterInput),
@@ -3636,12 +3581,12 @@ function TasksPageNew(props: {
 
   useEffect(() => {
     setOffset(0);
-  }, [props.projectId, props.status, props.search, props.contextFilterInput, props.tagFilterInput, sortDir, pageSize]);
+  }, [props.projectId, props.search, props.contextFilterInput, props.tagFilterInput, sortDir, pageSize]);
 
   useEffect(() => {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.projectId, props.status, props.search, props.contextFilterInput, props.tagFilterInput, props.version, sortDir, offset, pageSize]);
+  }, [props.projectId, props.search, props.contextFilterInput, props.tagFilterInput, props.version, sortDir, offset, pageSize]);
 
   const projectNameById = useMemo(() => {
     return new Map(props.projects.map((p) => [p.id, p.title]));
@@ -3659,7 +3604,7 @@ function TasksPageNew(props: {
   return (
     <div className="mx-auto grid w-full max-w-7xl gap-3">
       <div className="flex items-center justify-between">
-        <div className="text-lg font-semibold text-[#111827]">任务列表</div>
+        <div className="text-lg font-semibold text-[#111827]">下一步</div>
         <div className="flex items-center gap-2">
           <select
             className="rounded-md border border-[#E6E8F0] bg-white px-2 py-1 text-sm text-[#374151]"
@@ -3670,18 +3615,6 @@ function TasksPageNew(props: {
             {props.projects.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.title}
-              </option>
-            ))}
-          </select>
-          <select
-            className="rounded-md border border-[#E6E8F0] bg-white px-2 py-1 text-sm text-[#374151]"
-            value={props.status}
-            onChange={(e) => props.onStatus(e.target.value as TaskStatus | "")}
-          >
-            <option value="">全部状态</option>
-            {TASK_STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {taskStatusLabel(s)}
               </option>
             ))}
           </select>
@@ -3703,21 +3636,17 @@ function TasksPageNew(props: {
       ) : null}
 
       <div className="overflow-x-auto overflow-y-hidden rounded-lg border border-[#E6E8F0] bg-white">
-        <table className="w-full min-w-[980px] table-fixed text-left text-sm">
+        <table className="w-full min-w-[860px] table-fixed text-left text-sm">
           <colgroup>
             <col style={{ width: columnWidths.name }} />
             <col style={{ width: columnWidths.project }} />
-            <col style={{ width: columnWidths.priority }} />
-            <col style={{ width: columnWidths.status }} />
             <col style={{ width: columnWidths.dueAt }} />
             <col style={{ width: columnWidths.actions }} />
           </colgroup>
           <thead className="bg-[#F9FAFB] text-xs text-[#6B7280]">
             <tr>
-              {headerCell("任务名称", "name")}
+              {headerCell("下一步", "name")}
               {headerCell("所属项目", "project")}
-              {headerCell("优先级", "priority")}
-              {headerCell("状态", "status")}
               {headerCell("截止日期", "dueAt")}
               {headerCell("操作", "actions", true)}
             </tr>
@@ -3725,8 +3654,8 @@ function TasksPageNew(props: {
           <tbody>
             {items.length === 0 && !loading ? (
               <tr>
-                <td colSpan={6} className="px-4 py-10 text-center text-[#6B7280]">
-                  暂无 Task
+                <td colSpan={4} className="px-4 py-10 text-center text-[#6B7280]">
+                  暂无下一步
                 </td>
               </tr>
             ) : null}
@@ -3743,19 +3672,6 @@ function TasksPageNew(props: {
                   <div className="font-medium text-[#111827]">{t.name}</div>
                 </td>
                 <td className="px-4 py-3 text-[#6B7280]">{projectNameById.get(t.projectId ?? "") ?? "-"}</td>
-                <td className="px-4 py-3">
-                  <Badge
-                    color={t.priority === "P0" || t.priority === "High" ? "red" : t.priority === "Medium" ? "amber" : "gray"}
-                  >
-                    {taskPriorityLabel(t.priority)}
-                  </Badge>
-                </td>
-                <td className="px-4 py-3">
-                  <Badge color={t.status === "InProgress" ? "indigo" : t.status === "Done" ? "green" : t.status === "Canceled" ? "gray" : "gray"}>
-                    <span className={classNames("h-2 w-2 rounded-full", t.status === "InProgress" ? "bg-[#4F46E5]" : t.status === "Done" ? "bg-[#10B981]" : "bg-[#9CA3AF]")} />
-                    {taskStatusLabel(t.status)}
-                  </Badge>
-                </td>
                 <td className="px-4 py-3 text-[#6B7280]">
                   <span className="inline-flex items-center gap-1">
                     <span className="text-[#9CA3AF]">
@@ -4333,7 +4249,7 @@ function ProjectDrawerForm(props: {
             type="button"
             onClick={() => props.onGotoTasks(p.id)}
           >
-            查看该项目任务 →
+            查看该项目下一步 →
           </button>
           <button
             className="rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm text-[#DC2626] hover:bg-[#F5F6FA]"
@@ -4826,34 +4742,6 @@ function TaskDrawerForm(props: {
         />
       </Field>
 
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="状态">
-          <select
-            className="w-full rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm"
-            value={t.status}
-            onChange={(e) => props.onChange({ ...t, status: e.target.value as TaskStatus })}
-          >
-            {TASK_STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {taskStatusLabel(s)}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="优先级">
-          <select
-            className="w-full rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm"
-            value={t.priority}
-            onChange={(e) => props.onChange({ ...t, priority: e.target.value as TaskPriority })}
-          >
-            {TASK_PRIORITIES.map((p) => (
-              <option key={p} value={p}>
-                {taskPriorityLabel(p)}
-              </option>
-            ))}
-          </select>
-        </Field>
-      </div>
 
       <Field label="截止日期">
         <input
@@ -4878,14 +4766,6 @@ function TaskDrawerForm(props: {
 
       <Field label="情境分类">
         <TextInput value={t.context} onChange={(v) => props.onChange({ ...t, context: v })} />
-      </Field>
-      <Field label="详细信息（可选）">
-        <TextArea
-          value={t.details}
-          onChange={(v) => props.onChange({ ...t, details: v })}
-          rows={6}
-          placeholder="可选"
-        />
       </Field>
 
       {props.mode === "edit" ? (

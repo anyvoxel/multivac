@@ -1,11 +1,12 @@
 import {
-  createItem,
-  deleteItem,
-  getItem,
-  listItems,
-  updateItem,
-} from "./items";
-import type { Item, ItemBucket, ItemSortBy, SortDir } from "./items";
+  createAction,
+  deleteAction,
+  getAction,
+  listActions,
+  updateAction,
+} from "./actions";
+import type { Action, ActionLabel } from "./actions";
+import type { SortDir } from "./items";
 import type { Label } from "./projects";
 
 export type TaskStatus = "Todo" | "InProgress" | "Done" | "Canceled";
@@ -64,45 +65,104 @@ export type ListTasksQuery = {
   offset?: number;
 };
 
-function fromItem(item: Item): Task {
+function parseLabelName(name: string): Label {
+  const raw = name.trim();
+  if (!raw) return { value: "", kind: "Tag", filterable: false };
+  if (raw.startsWith("@")) {
+    return {
+      value: raw.slice(1).trim().toLowerCase(),
+      kind: "Context",
+      filterable: true,
+    };
+  }
+  if (raw.startsWith("#")) {
+    return {
+      value: raw.slice(1).trim().toLowerCase(),
+      kind: "Tag",
+      filterable: true,
+    };
+  }
   return {
-    id: item.id,
-    projectId: item.projectId,
-    name: item.title,
-    description: item.description,
-    labels: item.labels,
-    context: item.context,
-    details: item.details,
-    status: (item.taskStatus || "Todo") as TaskStatus,
-    priority: (item.priority || "Medium") as TaskPriority,
-    dueAt: item.dueAt,
-    createdAt: item.createdAt,
-    updatedAt: item.updatedAt,
+    value: raw.toLowerCase(),
+    kind: "Tag",
+    filterable: false,
   };
 }
 
-function taskBucket(status?: TaskStatus): ItemBucket | undefined {
-  switch (status) {
-    case "Done":
-      return "Completed";
-    case "Canceled":
-      return "Dropped";
-    case "Todo":
-    case "InProgress":
-    case undefined:
-      return undefined;
-    default:
-      return undefined;
-  }
+function toActionLabel(label: Label): ActionLabel {
+  const prefix = label.filterable ? (label.kind === "Context" ? "@" : "#") : "";
+  return { name: `${prefix}${label.value}` };
 }
 
-function taskSortBy(sortBy?: TaskSortBy): ItemSortBy | undefined {
-  switch (sortBy) {
-    case "DueAt":
-      return "DueAt";
-    default:
-      return undefined;
-  }
+function normalizeTaskDueAt(value?: string): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function fromAction(action: Action): Task {
+  const labels = action.labels
+    .map((label) => parseLabelName(label.name))
+    .filter((label) => label.value !== "");
+  return {
+    id: action.id,
+    projectId: action.project_id,
+    name: action.title,
+    description: action.description,
+    labels,
+    context: action.context[0] ?? "默认",
+    details: "",
+    status: "Todo",
+    priority: "Medium",
+    dueAt: action.attributes.task?.expected_at,
+    createdAt: action.createdAt,
+    updatedAt: action.updatedAt,
+  };
+}
+
+function expectedAtTimestamp(value?: string): number | null {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  return Number.isNaN(timestamp) ? null : timestamp;
+}
+
+function sortByDueAt(list: Task[], dir: SortDir): Task[] {
+  return list
+    .map((item, index) => ({ item, index, timestamp: expectedAtTimestamp(item.dueAt) }))
+    .sort((a, b) => {
+      const aNil = a.timestamp === null;
+      const bNil = b.timestamp === null;
+      if (aNil && bNil) return a.index - b.index;
+      if (aNil) return 1;
+      if (bNil) return -1;
+      const left = a.timestamp as number;
+      const right = b.timestamp as number;
+      const delta = left - right;
+      if (delta !== 0) {
+        return dir === "Desc" ? -delta : delta;
+      }
+      return a.index - b.index;
+    })
+    .map((x) => x.item);
+}
+
+function matchesContexts(task: Task, contexts?: string[]): boolean {
+  if (!contexts || contexts.length === 0) return true;
+  const context = task.context.trim().toLowerCase();
+  if (!context) return false;
+  return contexts.some((value) => context === value.trim().toLowerCase());
+}
+
+function matchesTags(task: Task, tags?: string[]): boolean {
+  if (!tags || tags.length === 0) return true;
+  const wanted = new Set(tags.map((tag) => tag.trim().toLowerCase()).filter(Boolean));
+  if (wanted.size === 0) return true;
+  return task.labels.some((label) => label.kind === "Tag" && wanted.has(label.value));
+}
+
+function matchesStatus(task: Task, status?: TaskStatus): boolean {
+  if (!status) return true;
+  return task.status === status;
 }
 
 export async function listTasksByProject(
@@ -113,40 +173,62 @@ export async function listTasksByProject(
 }
 
 export async function listTasks(q?: ListTasksQuery): Promise<Task[]> {
-  const items = await listItems({
-    kind: "Task",
-    bucket: taskBucket(q?.status),
-    projectId: q?.projectId,
-    taskStatus: q?.status === "Todo" || q?.status === "InProgress" ? q.status : undefined,
+  const needLocalProcess =
+    q?.sortBy === "DueAt" ||
+    (q?.contexts?.length ?? 0) > 0 ||
+    (q?.tags?.length ?? 0) > 0 ||
+    !!q?.status;
+
+  const actions = await listActions({
     search: q?.search,
-    contexts: q?.contexts,
-    tags: q?.tags,
-    sortBy: taskSortBy(q?.sortBy),
+    kind: "Task",
+    projectId: q?.projectId,
     sortDir: q?.sortDir,
-    limit: q?.limit,
-    offset: q?.offset,
+    limit: needLocalProcess ? undefined : q?.limit,
+    offset: needLocalProcess ? undefined : q?.offset,
   });
-  return items.map(fromItem);
+
+  let list = actions.filter((action) => action.kind === "Task").map(fromAction);
+  list = list.filter((task) => matchesStatus(task, q?.status));
+  list = list.filter((task) => matchesContexts(task, q?.contexts));
+  list = list.filter((task) => matchesTags(task, q?.tags));
+
+  if (q?.sortBy === "DueAt") {
+    list = sortByDueAt(list, q?.sortDir ?? "Asc");
+  }
+
+  if (!needLocalProcess) {
+    return list;
+  }
+
+  const offset = q?.offset ?? 0;
+  if (offset > 0) {
+    list = list.slice(offset);
+  }
+  if (q?.limit !== undefined) {
+    list = list.slice(0, q.limit);
+  }
+  return list;
 }
 
 export async function getTask(id: string): Promise<Task> {
-  return fromItem(await getItem(id));
+  return fromAction(await getAction(id));
 }
 
 export async function createTask(input: CreateTaskInput): Promise<Task> {
-  return fromItem(
-    await createItem({
-      kind: "Task",
-      bucket: taskBucket(input.status) ?? "NextAction",
-      projectId: input.projectId,
+  return fromAction(
+    await createAction({
       title: input.name,
       description: input.description,
-      labels: input.labels,
-      context: input.context,
-      details: input.details,
-      taskStatus: input.status ?? "Todo",
-      priority: input.priority,
-      dueAt: input.dueAt,
+      project_id: input.projectId,
+      kind: "Task",
+      context: input.context.trim() ? [input.context.trim()] : [],
+      labels: input.labels.map(toActionLabel),
+      attributes: {
+        task: {
+          expected_at: normalizeTaskDueAt(input.dueAt),
+        },
+      },
     }),
   );
 }
@@ -155,50 +237,30 @@ export async function updateTask(
   id: string,
   input: UpdateTaskInput,
 ): Promise<Task> {
-  const current = await getItem(id);
-  return fromItem(
-    await updateItem(id, {
-      kind: current.kind,
-      bucket: current.bucket,
-      projectId: input.projectId,
+  return fromAction(
+    await updateAction(id, {
       title: input.name,
       description: input.description,
-      labels: input.labels,
-      context: input.context,
-      details: input.details,
-      taskStatus: current.taskStatus,
-      priority: input.priority,
-      waitingFor: current.waitingFor,
-      expectedAt: current.expectedAt,
-      dueAt: input.dueAt,
+      project_id: input.projectId,
+      kind: "Task",
+      context: input.context.trim() ? [input.context.trim()] : [],
+      labels: input.labels.map(toActionLabel),
+      attributes: {
+        task: {
+          expected_at: normalizeTaskDueAt(input.dueAt),
+        },
+      },
     }),
   );
 }
 
 export async function setTaskStatus(
   id: string,
-  status: TaskStatus,
+  _status: TaskStatus,
 ): Promise<Task> {
-  const current = await getItem(id);
-  return fromItem(
-    await updateItem(id, {
-      kind: current.kind,
-      bucket: taskBucket(status) ?? "NextAction",
-      projectId: current.projectId,
-      title: current.title,
-      description: current.description,
-      labels: current.labels,
-      context: current.context,
-      details: current.details,
-      taskStatus: status,
-      priority: current.priority,
-      waitingFor: current.waitingFor,
-      expectedAt: current.expectedAt,
-      dueAt: current.dueAt,
-    }),
-  );
+  return getTask(id);
 }
 
 export async function deleteTask(id: string): Promise<void> {
-  await deleteItem(id);
+  await deleteAction(id);
 }
