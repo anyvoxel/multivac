@@ -15,24 +15,24 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	"github.com/anyvoxel/multivac/internal/webui"
-	actionapp "github.com/anyvoxel/multivac/pkg/action/application"
-	actionsqlite "github.com/anyvoxel/multivac/pkg/action/infra/sqlite"
-	actionhttp "github.com/anyvoxel/multivac/pkg/action/interfaces/http"
-	contextapp "github.com/anyvoxel/multivac/pkg/context/application"
-	contextsqlite "github.com/anyvoxel/multivac/pkg/context/infra/sqlite"
-	contexthttp "github.com/anyvoxel/multivac/pkg/context/interfaces/http"
-	inboxapp "github.com/anyvoxel/multivac/pkg/inbox/application"
-	inboxsqlite "github.com/anyvoxel/multivac/pkg/inbox/infra/sqlite"
-	inboxhttp "github.com/anyvoxel/multivac/pkg/inbox/interfaces/http"
-	projectapp "github.com/anyvoxel/multivac/pkg/project/application"
-	projectsqlite "github.com/anyvoxel/multivac/pkg/project/infra/sqlite"
-	projecthttp "github.com/anyvoxel/multivac/pkg/project/interfaces/http"
-	referenceapp "github.com/anyvoxel/multivac/pkg/reference/application"
-	referencesqlite "github.com/anyvoxel/multivac/pkg/reference/infra/sqlite"
-	referencehttp "github.com/anyvoxel/multivac/pkg/reference/interfaces/http"
-	somedayapp "github.com/anyvoxel/multivac/pkg/someday/application"
-	somedaysqlite "github.com/anyvoxel/multivac/pkg/someday/infra/sqlite"
-	somedayhttp "github.com/anyvoxel/multivac/pkg/someday/interfaces/http"
+	actionapp "github.com/anyvoxel/multivac/pkg/application"
+	actionsqlite "github.com/anyvoxel/multivac/pkg/infra/sqlite"
+	actionhttp "github.com/anyvoxel/multivac/pkg/interfaces/http"
+	contextapp "github.com/anyvoxel/multivac/pkg/application"
+	contextsqlite "github.com/anyvoxel/multivac/pkg/infra/sqlite"
+	contexthttp "github.com/anyvoxel/multivac/pkg/interfaces/http"
+	inboxapp "github.com/anyvoxel/multivac/pkg/application"
+	inboxsqlite "github.com/anyvoxel/multivac/pkg/infra/sqlite"
+	inboxhttp "github.com/anyvoxel/multivac/pkg/interfaces/http"
+	projectapp "github.com/anyvoxel/multivac/pkg/application"
+	projectsqlite "github.com/anyvoxel/multivac/pkg/infra/sqlite"
+	projecthttp "github.com/anyvoxel/multivac/pkg/interfaces/http"
+	referenceapp "github.com/anyvoxel/multivac/pkg/application"
+	referencesqlite "github.com/anyvoxel/multivac/pkg/infra/sqlite"
+	referencehttp "github.com/anyvoxel/multivac/pkg/interfaces/http"
+	somedayapp "github.com/anyvoxel/multivac/pkg/application"
+	somedaysqlite "github.com/anyvoxel/multivac/pkg/infra/sqlite"
+	somedayhttp "github.com/anyvoxel/multivac/pkg/interfaces/http"
 	"github.com/anyvoxel/multivac/pkg/utils/version"
 )
 
@@ -163,7 +163,7 @@ func run(addr, dbPath string) error {
 	return nil
 }
 
-func setupServices(dbPath string) (*sqlx.DB, *projecthttp.Handler, *inboxhttp.Handler, *actionhttp.Handler, *contexthttp.Handler, *referencehttp.Handler, *somedayhttp.Handler, error) {
+func setupServices(dbPath string) (*sqlx.DB, *projecthttp.ProjectHandler, *inboxhttp.InboxHandler, *actionhttp.ActionHandler, *contexthttp.ContextHandler, *referencehttp.ReferenceHandler, *somedayhttp.SomedayHandler, error) {
 	db, err := sqlx.Open("sqlite3", dbPath)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, err
@@ -179,53 +179,53 @@ func setupServices(dbPath string) (*sqlx.DB, *projecthttp.Handler, *inboxhttp.Ha
 		return nil, nil, nil, nil, nil, nil, nil, err
 	}
 
-	projRepo := projectsqlite.NewRepository(db)
-	projSvc := projectapp.NewService(projRepo)
+	projRepo := projectsqlite.NewProjectRepository(db)
+	projSvc := projectapp.NewProjectService(projRepo)
 	if err := projSvc.Migrate(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, nil, nil, nil, nil, nil, nil, err
 	}
-	projHandler := projecthttp.NewHandler(projSvc)
+	projHandler := projecthttp.NewProjectHandler(projSvc)
 
-	inboxRepo := inboxsqlite.NewRepository(db)
-	inboxSvc := inboxapp.NewService(inboxRepo)
+	inboxRepo := inboxsqlite.NewInboxRepository(db)
+	inboxSvc := inboxapp.NewInboxService(inboxRepo)
 	if err := inboxSvc.Migrate(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, nil, nil, nil, nil, nil, nil, err
 	}
-	inboxHandler := inboxhttp.NewHandler(inboxSvc)
+	inboxHandler := inboxhttp.NewInboxHandler(inboxSvc)
 
-	actionRepo := actionsqlite.NewRepository(db)
-	actionSvc := actionapp.NewService(actionRepo)
+	actionRepo := actionsqlite.NewActionRepository(db)
+	actionSvc := actionapp.NewActionService(actionRepo)
 	if err := actionSvc.Migrate(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, nil, nil, nil, nil, nil, nil, err
 	}
-	actionHandler := actionhttp.NewHandler(actionSvc)
+	actionHandler := actionhttp.NewActionHandler(actionSvc)
 
-	contextRepo := contextsqlite.NewRepository(db)
-	contextSvc := contextapp.NewService(contextRepo)
+	contextRepo := contextsqlite.NewContextRepository(db)
+	contextSvc := contextapp.NewContextService(contextRepo)
 	if err := contextSvc.Migrate(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, nil, nil, nil, nil, nil, nil, err
 	}
-	contextHandler := contexthttp.NewHandler(contextSvc)
+	contextHandler := contexthttp.NewContextHandler(contextSvc)
 
-	referenceRepo := referencesqlite.NewRepository(db)
-	referenceSvc := referenceapp.NewService(referenceRepo)
+	referenceRepo := referencesqlite.NewReferenceRepository(db)
+	referenceSvc := referenceapp.NewReferenceService(referenceRepo)
 	if err := referenceSvc.Migrate(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, nil, nil, nil, nil, nil, nil, err
 	}
-	referenceHandler := referencehttp.NewHandler(referenceSvc)
+	referenceHandler := referencehttp.NewReferenceHandler(referenceSvc)
 
-	somedayRepo := somedaysqlite.NewRepository(db)
-	somedaySvc := somedayapp.NewService(somedayRepo)
+	somedayRepo := somedaysqlite.NewSomedayRepository(db)
+	somedaySvc := somedayapp.NewSomedayService(somedayRepo)
 	if err := somedaySvc.Migrate(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, nil, nil, nil, nil, nil, nil, err
 	}
-	somedayHandler := somedayhttp.NewHandler(somedaySvc)
+	somedayHandler := somedayhttp.NewSomedayHandler(somedaySvc)
 
 	return db, projHandler, inboxHandler, actionHandler, contextHandler, referenceHandler, somedayHandler, nil
 }
