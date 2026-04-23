@@ -27,6 +27,9 @@ import (
 	referenceapp "github.com/anyvoxel/multivac/pkg/reference/application"
 	referencesqlite "github.com/anyvoxel/multivac/pkg/reference/infra/sqlite"
 	referencehttp "github.com/anyvoxel/multivac/pkg/reference/interfaces/http"
+	somedayapp "github.com/anyvoxel/multivac/pkg/someday/application"
+	somedaysqlite "github.com/anyvoxel/multivac/pkg/someday/infra/sqlite"
+	somedayhttp "github.com/anyvoxel/multivac/pkg/someday/interfaces/http"
 	"github.com/anyvoxel/multivac/pkg/utils/version"
 )
 
@@ -46,7 +49,7 @@ func main() {
 }
 
 func run(addr, dbPath string) error {
-	db, projHandler, inboxHandler, contextHandler, referenceHandler, err := setupServices(dbPath)
+	db, projHandler, inboxHandler, contextHandler, referenceHandler, somedayHandler, err := setupServices(dbPath)
 	if err != nil {
 		return err
 	}
@@ -110,6 +113,14 @@ func run(addr, dbPath string) error {
 	api.PUT("/references/:id", referenceHandler.Update)
 	api.DELETE("/references/:id", referenceHandler.Delete)
 
+	api.POST("/somedays", somedayHandler.Create)
+	api.GET("/somedays", somedayHandler.List)
+	api.GET("/somedays/:id", somedayHandler.Get)
+	api.PUT("/somedays/:id", somedayHandler.Update)
+	api.DELETE("/somedays/:id", somedayHandler.Delete)
+
+	api.POST("/inboxes/:id/convert-to-someday", somedayHandler.ConvertFromInbox)
+
 	// Web UI (embedded). It serves SPA under /.
 	h.GET("/*filepath", func(_ context.Context, ctx *app.RequestContext) {
 		p := ctx.Param("filepath")
@@ -142,27 +153,27 @@ func run(addr, dbPath string) error {
 	return nil
 }
 
-func setupServices(dbPath string) (*sqlx.DB, *projecthttp.Handler, *inboxhttp.Handler, *contexthttp.Handler, *referencehttp.Handler, error) {
+func setupServices(dbPath string) (*sqlx.DB, *projecthttp.Handler, *inboxhttp.Handler, *contexthttp.Handler, *referencehttp.Handler, *somedayhttp.Handler, error) {
 	db, err := sqlx.Open("sqlite3", dbPath)
 	if err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	db.SetMaxOpenConns(1)
 	db.SetConnMaxLifetime(time.Minute)
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	if _, err := db.Exec("PRAGMA foreign_keys = ON;"); err != nil {
 		_ = db.Close()
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 
 	projRepo := sqlite.NewRepository(db)
 	projSvc := application.NewService(projRepo)
 	if err := projSvc.Migrate(context.Background()); err != nil {
 		_ = db.Close()
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	projHandler := projecthttp.NewHandler(projSvc)
 
@@ -170,7 +181,7 @@ func setupServices(dbPath string) (*sqlx.DB, *projecthttp.Handler, *inboxhttp.Ha
 	inboxSvc := inboxapp.NewService(inboxRepo)
 	if err := inboxSvc.Migrate(context.Background()); err != nil {
 		_ = db.Close()
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	inboxHandler := inboxhttp.NewHandler(inboxSvc)
 
@@ -178,7 +189,7 @@ func setupServices(dbPath string) (*sqlx.DB, *projecthttp.Handler, *inboxhttp.Ha
 	contextSvc := contextapp.NewService(contextRepo)
 	if err := contextSvc.Migrate(context.Background()); err != nil {
 		_ = db.Close()
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	contextHandler := contexthttp.NewHandler(contextSvc)
 
@@ -186,9 +197,17 @@ func setupServices(dbPath string) (*sqlx.DB, *projecthttp.Handler, *inboxhttp.Ha
 	referenceSvc := referenceapp.NewService(referenceRepo)
 	if err := referenceSvc.Migrate(context.Background()); err != nil {
 		_ = db.Close()
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	referenceHandler := referencehttp.NewHandler(referenceSvc)
 
-	return db, projHandler, inboxHandler, contextHandler, referenceHandler, nil
+	somedayRepo := somedaysqlite.NewRepository(db)
+	somedaySvc := somedayapp.NewService(somedayRepo)
+	if err := somedaySvc.Migrate(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, nil, nil, nil, nil, nil, err
+	}
+	somedayHandler := somedayhttp.NewHandler(somedaySvc)
+
+	return db, projHandler, inboxHandler, contextHandler, referenceHandler, somedayHandler, nil
 }

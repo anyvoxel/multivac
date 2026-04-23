@@ -60,6 +60,7 @@ import {
 } from "./lib/references";
 import type { Reference as ManagedReference } from "./lib/references";
 import {
+  convertInboxToSomeday,
   createSomeday,
   deleteSomeday,
   getSomeday,
@@ -1234,6 +1235,26 @@ export default function App() {
     }
   }
 
+  async function onClarifyInboxToSomeday(inbox: Inbox) {
+    if (!confirm(`确定将收集箱事项澄清为将来/也许: ${inbox.name} ?`)) return;
+    setInboxLoading(true);
+    setInboxError("");
+    setSomedayError("");
+    try {
+      await convertInboxToSomeday(inbox.id);
+      if (drawer.type === "inbox" && drawer.mode === "edit" && drawer.id === inbox.id) {
+        closeDrawer();
+      }
+      await Promise.all([refreshInboxes(), refreshSomedays()]);
+    } catch (e) {
+      const message = String(e);
+      setInboxError(message);
+      setSomedayError(message);
+    } finally {
+      setInboxLoading(false);
+    }
+  }
+
   async function onDeleteContextItem(contextItem: ManagedContext) {
     if (!confirm(`确定删除情境: ${contextItem.title} ?`)) return;
     setContextLoading(true);
@@ -1541,6 +1562,7 @@ export default function App() {
                 onRefresh={() => void refreshInboxes()}
                 onOpen={(id, inbox) => void openInboxDrawer("edit", id, inbox)}
                 onDelete={(inbox) => void onDeleteInbox(inbox)}
+                onClarify={(inbox) => void onClarifyInboxToSomeday(inbox)}
               />
             ) : route === "contexts" ? (
               <ContextsPage
@@ -2586,6 +2608,7 @@ function InboxesPage(props: {
   onRefresh: () => void;
   onOpen: (id: string, inbox?: Inbox) => void;
   onDelete: (inbox: Inbox) => void;
+  onClarify: (inbox: Inbox) => void;
 }) {
   const [columnWidths, setColumnWidths] = useState<InboxColumnWidths>(() => loadInboxColumnWidths());
 
@@ -2705,9 +2728,8 @@ function InboxesPage(props: {
                     </button>
                     <button
                       type="button"
-                      className="cursor-not-allowed text-[#9CA3AF]"
-                      disabled
-                      title="暂未实现"
+                      className="text-[#4F46E5] hover:underline"
+                      onClick={() => props.onClarify(inbox)}
                     >
                       澄清
                     </button>
@@ -4711,11 +4733,12 @@ function SomedayDrawerForm(props: {
       <Field label="任务名称">
         <TextInput value={someday.name} onChange={(v) => props.onChange({ ...someday, name: v })} />
       </Field>
-      <Field label="描述">
-        <TextArea
+      <Field label="描述（Markdown）">
+        <MarkdownEditor
           value={someday.description}
           onChange={(v) => props.onChange({ ...someday, description: v })}
-          rows={8}
+          placeholder="输入详细描述，可自行使用 Markdown 组织结构"
+          contentClassName="project-md-editor__content--tall"
         />
       </Field>
 

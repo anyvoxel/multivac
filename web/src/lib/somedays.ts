@@ -1,15 +1,16 @@
-import {
-  createItem,
-  deleteItem,
-  getItem,
-  listItems,
-  updateItem,
-} from "./items";
-import type { Item, ItemBucket, ItemSortBy, SortDir } from "./items";
+export type SortDir = "Asc" | "Desc";
 
 export type Someday = {
   id: string;
   name: string;
+  description: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type ApiSomeday = {
+  id: string;
+  title: string;
   description: string;
   createdAt: string;
   updatedAt: string;
@@ -22,6 +23,11 @@ export type CreateSomedayInput = {
 
 export type UpdateSomedayInput = CreateSomedayInput;
 
+export type ConvertInboxToSomedayInput = {
+  name?: string;
+  description?: string;
+};
+
 export type SomedaySortBy = "CreatedAt" | "UpdatedAt" | "Name";
 
 export type ListSomedaysQuery = {
@@ -32,7 +38,37 @@ export type ListSomedaysQuery = {
   offset?: number;
 };
 
-function mapSortBy(sortBy?: SomedaySortBy): ItemSortBy | undefined {
+function apiBase(): string {
+  const v = import.meta.env.VITE_API_BASE as string | undefined;
+  if (v === undefined) return "";
+  return v;
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${apiBase()}${path}`, {
+    ...init,
+    headers: {
+      "content-type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+  });
+
+  if (res.status === 204) {
+    return undefined as unknown as T;
+  }
+
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : undefined;
+
+  if (!res.ok) {
+    const msg = (data && typeof data.error === "string" && data.error) || `${res.status} ${res.statusText}`;
+    throw new Error(msg);
+  }
+
+  return data as T;
+}
+
+function toApiSortBy(sortBy?: SomedaySortBy): string | undefined {
   switch (sortBy) {
     case "Name":
       return "Title";
@@ -45,72 +81,66 @@ function mapSortBy(sortBy?: SomedaySortBy): ItemSortBy | undefined {
   }
 }
 
-function fromItem(item: Item): Someday {
+function fromApiSomeday(someday: ApiSomeday): Someday {
   return {
-    id: item.id,
-    name: item.title,
-    description: item.description,
-    createdAt: item.createdAt,
-    updatedAt: item.updatedAt,
+    id: someday.id,
+    name: someday.title,
+    description: someday.description,
+    createdAt: someday.createdAt,
+    updatedAt: someday.updatedAt,
   };
 }
 
-function somedayBucket(): ItemBucket {
-  return "SomedayMaybe";
-}
-
 export async function listSomedays(q?: ListSomedaysQuery): Promise<Someday[]> {
-  const items = await listItems({
-    kind: "SomedayMaybe",
-    bucket: somedayBucket(),
-    search: q?.search,
-    sortBy: mapSortBy(q?.sortBy),
-    sortDir: q?.sortDir,
-    limit: q?.limit,
-    offset: q?.offset,
-  });
-  return items.map(fromItem);
+  const sp = new URLSearchParams();
+  if (q?.search) sp.set("search", q.search);
+  const sortBy = toApiSortBy(q?.sortBy);
+  if (sortBy) sp.set("sortBy", sortBy);
+  if (q?.sortDir) sp.set("sortDir", q.sortDir);
+  if (q?.limit !== undefined) sp.set("limit", String(q.limit));
+  if (q?.offset !== undefined) sp.set("offset", String(q.offset));
+  const qs = sp.toString();
+  const list = await request<ApiSomeday[]>(`/api/v1/somedays${qs ? `?${qs}` : ""}`);
+  return list.map(fromApiSomeday);
 }
 
 export async function getSomeday(id: string): Promise<Someday> {
-  return fromItem(await getItem(id));
+  return fromApiSomeday(await request<ApiSomeday>(`/api/v1/somedays/${encodeURIComponent(id)}`));
 }
 
 export async function createSomeday(input: CreateSomedayInput): Promise<Someday> {
-  return fromItem(
-    await createItem({
-      kind: "SomedayMaybe",
-      bucket: somedayBucket(),
-      title: input.name,
-      description: input.description,
-      labels: [],
-      context: "",
-      details: "",
+  return fromApiSomeday(
+    await request<ApiSomeday>("/api/v1/somedays", {
+      method: "POST",
+      body: JSON.stringify({ title: input.name, description: input.description }),
     }),
   );
 }
 
 export async function updateSomeday(id: string, input: UpdateSomedayInput): Promise<Someday> {
-  const current = await getItem(id);
-  return fromItem(
-    await updateItem(id, {
-      kind: current.kind,
-      bucket: current.bucket,
-      projectId: current.projectId,
-      title: input.name,
-      description: input.description,
-      labels: current.labels,
-      context: current.context,
-      details: current.details,
-      taskStatus: current.taskStatus,
-      priority: current.priority,
-      waitingFor: current.waitingFor,
-      expectedAt: current.expectedAt,
-      dueAt: current.dueAt,
+  return fromApiSomeday(
+    await request<ApiSomeday>(`/api/v1/somedays/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify({ title: input.name, description: input.description }),
+    }),
+  );
+}
+
+export async function convertInboxToSomeday(id: string, input?: ConvertInboxToSomedayInput): Promise<Someday> {
+  const body = input
+    ? JSON.stringify({
+        ...(input.name !== undefined ? { title: input.name } : {}),
+        ...(input.description !== undefined ? { description: input.description } : {}),
+      })
+    : undefined;
+  return fromApiSomeday(
+    await request<ApiSomeday>(`/api/v1/inboxes/${encodeURIComponent(id)}/convert-to-someday`, {
+      method: "POST",
+      ...(body ? { body } : {}),
     }),
   );
 }
 
 export async function deleteSomeday(id: string): Promise<void> {
-  await deleteItem(id);
+  await request<void>(`/api/v1/somedays/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
