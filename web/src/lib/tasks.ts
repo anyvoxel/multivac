@@ -9,7 +9,7 @@ import type { Action, ActionLabel } from "./actions";
 import type { SortDir } from "./items";
 import type { Label } from "./projects";
 
-export type TaskStatus = "Todo" | "InProgress" | "Done" | "Canceled";
+export type TaskStatus = "Pending" | "Active" | "Completed";
 export type TaskPriority = "Low" | "Medium" | "High" | "P0";
 export type TaskSortBy = "DueAt";
 export type { SortDir };
@@ -51,6 +51,7 @@ export type UpdateTaskInput = {
   details: string;
   priority: TaskPriority;
   dueAt?: string;
+  status?: TaskStatus;
 };
 
 export type ListTasksQuery = {
@@ -106,15 +107,15 @@ function fromAction(action: Action): Task {
     .filter((label) => label.value !== "");
   return {
     id: action.id,
-    projectId: action.project_id,
+    projectId: action.projectId,
     name: action.title,
     description: action.description,
     labels,
     context: action.context[0] ?? "默认",
     details: "",
-    status: "Todo",
+    status: action.attributes.task?.status ?? "Pending",
     priority: "Medium",
-    dueAt: action.attributes.task?.expected_at,
+    dueAt: action.attributes.task?.expectedAt,
     createdAt: action.createdAt,
     updatedAt: action.updatedAt,
   };
@@ -220,13 +221,14 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
     await createAction({
       title: input.name,
       description: input.description,
-      project_id: input.projectId,
+      projectId: input.projectId,
       kind: "Task",
       context: input.context.trim() ? [input.context.trim()] : [],
       labels: input.labels.map(toActionLabel),
       attributes: {
         task: {
-          expected_at: normalizeTaskDueAt(input.dueAt),
+          expectedAt: normalizeTaskDueAt(input.dueAt),
+          status: input.status ?? "Pending",
         },
       },
     }),
@@ -241,13 +243,14 @@ export async function updateTask(
     await updateAction(id, {
       title: input.name,
       description: input.description,
-      project_id: input.projectId,
+      projectId: input.projectId,
       kind: "Task",
       context: input.context.trim() ? [input.context.trim()] : [],
       labels: input.labels.map(toActionLabel),
       attributes: {
         task: {
-          expected_at: normalizeTaskDueAt(input.dueAt),
+          expectedAt: normalizeTaskDueAt(input.dueAt),
+          status: input.status ?? "Pending",
         },
       },
     }),

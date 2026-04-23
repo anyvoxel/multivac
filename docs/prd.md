@@ -161,6 +161,7 @@ Action 是项目中的一个具体步骤，用户可以在项目中添加多个 
     "attributes": {
         "task": {
             "expected_at": "", // 任务的预计完成时间，格式为 RFC33339 格式，例如 "2006-01-02T15:04:05Z07:00"，统一使用 UTC 时区
+            "status": "Pending" // 任务状态，取值包括 Pending（待处理）、Active（进行中）和 Completed（已完成），默认值为 Pending
         }, // 当 kind 为 Task 时，包含任务相关的属性
         "waiting": {
             "delegatee": "", // 等待的委托人，用户在添加 Action 时输入的委托人

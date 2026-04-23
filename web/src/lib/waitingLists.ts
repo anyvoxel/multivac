@@ -58,7 +58,7 @@ function toWaitingAttributes(owner: string, expectedAt?: string): ActionAttribut
   return {
     waiting: {
       delegatee: owner,
-      due_at: expectedAt,
+      dueAt: expectedAt,
     },
   };
 }
@@ -69,7 +69,7 @@ function fromAction(action: Action): WaitingList {
     name: action.title,
     details: action.description,
     owner: action.attributes.waiting?.delegatee ?? "",
-    expectedAt: action.attributes.waiting?.due_at,
+    expectedAt: action.attributes.waiting?.dueAt,
     createdAt: action.createdAt,
     updatedAt: action.updatedAt,
   };
@@ -152,7 +152,7 @@ export async function updateWaitingList(id: string, input: UpdateWaitingListInpu
     await updateAction(id, {
       title: input.name,
       description: input.details,
-      project_id: current.project_id,
+      projectId: current.projectId,
       kind: "Waiting",
       context: current.context,
       labels: current.labels,

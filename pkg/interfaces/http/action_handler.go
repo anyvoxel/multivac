@@ -83,7 +83,7 @@ func NewActionHandler(svc *application.ActionService) *ActionHandler { return &A
 type createActionReq struct {
 	Title       string            `json:"title"`
 	Description string            `json:"description"`
-	ProjectID   *string           `json:"project_id"`
+	ProjectID   *string           `json:"projectId"`
 	Kind        string            `json:"kind"`
 	Context     []string          `json:"context"`
 	Labels      []domain.Label    `json:"labels"`
@@ -95,7 +95,7 @@ type updateActionReq = createActionReq
 type convertActionInboxReq struct {
 	Title       *string            `json:"title"`
 	Description *string            `json:"description"`
-	ProjectID   *string            `json:"project_id"`
+	ProjectID   *string            `json:"projectId"`
 	Kind        *string            `json:"kind"`
 	Context     []string           `json:"context"`
 	Labels      []domain.Label     `json:"labels"`
@@ -106,7 +106,7 @@ type actionResp struct {
 	ID          string            `json:"id"`
 	Title       string            `json:"title"`
 	Description string            `json:"description"`
-	ProjectID   *string           `json:"project_id,omitempty"`
+	ProjectID   *string           `json:"projectId,omitempty"`
 	Kind        string            `json:"kind"`
 	Context     []string          `json:"context"`
 	Labels      []domain.Label    `json:"labels"`

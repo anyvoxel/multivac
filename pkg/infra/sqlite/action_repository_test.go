@@ -151,4 +151,6 @@ func TestActionRepositoryConvertFromInbox(t *testing.T) {
 	loaded, err := repo.Get(ctx, "01J0000000000000000000201")
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(loaded.Title).To(gomega.Equal("Clarified action"))
+	g.Expect(loaded.Attributes.Task).ToNot(gomega.BeNil())
+	g.Expect(loaded.Attributes.Task.Status).To(gomega.Equal(domain.TaskStatusPending))
 }

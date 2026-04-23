@@ -50,8 +50,8 @@ export type ListProjectsQuery = {
 
 type ApiGoal = {
   title: string;
-  created_at: string;
-  completed_at?: string;
+  createdAt: string;
+  completedAt?: string;
 };
 
 type ApiReference = {
@@ -112,16 +112,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 function fromApiGoal(goal: ApiGoal): Goal {
   return {
     title: goal.title,
-    createdAt: goal.created_at,
-    completedAt: goal.completed_at,
+    createdAt: goal.createdAt,
+    completedAt: goal.completedAt,
   };
 }
 
 function toApiGoal(goal: Goal): ApiGoal {
   return {
     title: goal.title,
-    created_at: goal.createdAt,
-    completed_at: goal.completedAt,
+    createdAt: goal.createdAt,
+    completedAt: goal.completedAt,
   };
 }
 

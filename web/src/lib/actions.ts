@@ -6,18 +6,21 @@ export type ActionLabel = {
   name: string;
 };
 
+export type ActionTaskStatus = "Pending" | "Active" | "Completed";
+
 export type ActionTaskAttributes = {
-  expected_at?: string;
+  expectedAt?: string;
+  status?: ActionTaskStatus;
 };
 
 export type ActionWaitingAttributes = {
   delegatee: string;
-  due_at?: string;
+  dueAt?: string;
 };
 
 export type ActionScheduledAttributes = {
-  start_at?: string;
-  end_at?: string;
+  startAt?: string;
+  endAt?: string;
 };
 
 export type ActionAttributes = {
@@ -30,7 +33,7 @@ export type Action = {
   id: string;
   title: string;
   description: string;
-  project_id?: string;
+  projectId?: string;
   kind: ActionKind;
   context: string[];
   labels: ActionLabel[];
@@ -54,7 +57,7 @@ export type ListActionsQuery = {
 export type CreateActionInput = {
   title: string;
   description: string;
-  project_id?: string;
+  projectId?: string;
   kind: ActionKind;
   context?: string[];
   labels?: ActionLabel[];
@@ -110,7 +113,7 @@ function toAction(input: CreateActionInput | UpdateActionInput): Omit<Action, "i
   return {
     title: input.title,
     description: input.description,
-    project_id: input.project_id,
+    projectId: input.projectId,
     kind: input.kind,
     context: input.context ?? [],
     labels: input.labels ?? [],

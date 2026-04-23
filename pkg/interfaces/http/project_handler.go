@@ -73,8 +73,8 @@ func NewProjectHandler(svc *application.ProjectService) *ProjectHandler {
 
 type goalReq struct {
 	Title       string     `json:"title"`
-	CreatedAt   *time.Time `json:"created_at,omitempty"`
-	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	CreatedAt   *time.Time `json:"createdAt,omitempty"`
+	CompletedAt *time.Time `json:"completedAt,omitempty"`
 }
 
 type projectReferenceReq struct {
@@ -102,8 +102,8 @@ type setStatusReq struct {
 
 type goalResp struct {
 	Title       string     `json:"title"`
-	CreatedAt   time.Time  `json:"created_at"`
-	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	CompletedAt *time.Time `json:"completedAt,omitempty"`
 }
 
 type projectReferenceResp struct {

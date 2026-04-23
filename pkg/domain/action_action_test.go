@@ -29,6 +29,7 @@ func TestNewActionTaskAndNormalization(t *testing.T) {
 	g.Expect(action.ContextIDs).To(gomega.Equal([]string{"c1", "c2"}))
 	g.Expect(action.Labels).To(gomega.Equal([]Label{{Name: "l1"}, {Name: "l2"}}))
 	g.Expect(action.Attributes.Task).ToNot(gomega.BeNil())
+	g.Expect(action.Attributes.Task.Status).To(gomega.Equal(TaskStatusPending))
 	g.Expect(action.CreatedAt.Location()).To(gomega.Equal(time.UTC))
 	g.Expect(action.UpdatedAt.Location()).To(gomega.Equal(time.UTC))
 }
@@ -37,7 +38,10 @@ func TestActionValidateAttributesByKind(t *testing.T) {
 	g := gomega.NewWithT(t)
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
-	_, err := NewAction("id", "title", "desc", nil, KindWaiting, nil, nil, Attributes{Waiting: &WaitingAttributes{}}, now)
+	_, err := NewAction("id", "title", "desc", nil, KindTask, nil, nil, Attributes{Task: &TaskAttributes{Status: TaskStatus("wat")}}, now)
+	g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("status: Unsupported value")))
+
+	_, err = NewAction("id", "title", "desc", nil, KindWaiting, nil, nil, Attributes{Waiting: &WaitingAttributes{}}, now)
 	g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("attributes.waiting.delegatee: Required value")))
 
 	dueAt := now.Add(time.Hour)
@@ -47,7 +51,7 @@ func TestActionValidateAttributesByKind(t *testing.T) {
 	startAt := now.Add(time.Hour)
 	endAt := now
 	_, err = NewAction("id", "title", "desc", nil, KindScheduled, nil, nil, Attributes{Scheduled: &ScheduledAttributes{StartAt: &startAt, EndAt: &endAt}}, now)
-	g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("attributes.scheduled.end_at: Unsupported value")))
+	g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("attributes.scheduled.endAt: Unsupported value")))
 }
 
 func TestActionUpdateDetails(t *testing.T) {

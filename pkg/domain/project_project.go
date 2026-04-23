@@ -14,8 +14,8 @@ type ProjectReference struct {
 
 type ProjectGoal struct {
 	Title       string     `json:"title"`
-	CreatedAt   time.Time  `json:"created_at"`
-	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	CompletedAt *time.Time `json:"completedAt,omitempty"`
 }
 
 // Project is the aggregate root for project management.

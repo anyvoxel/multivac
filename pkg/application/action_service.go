@@ -79,7 +79,7 @@ func (s *ActionService) ConvertFromInbox(ctx context.Context, inboxID string, cm
 	}
 	attributes := cmd.Attributes
 	if attributes == nil {
-		v := domain.Attributes{Task: &domain.TaskAttributes{}}
+		v := domain.Attributes{Task: &domain.TaskAttributes{Status: domain.TaskStatusPending}}
 		attributes = &v
 	}
 	return s.repo.ConvertFromInbox(ctx, inboxID, cmd.Title, cmd.Description, kind, cmd.ProjectID, cmd.ContextIDs, cmd.Labels, attributes, s.now().UTC())

@@ -285,6 +285,34 @@ function projectStatusLabel(s: ProjectStatus): string {
   }
 }
 
+type TaskStatus = "Pending" | "Active" | "Completed";
+
+function taskStatusLabel(s: TaskStatus): string {
+  switch (s) {
+    case "Pending":
+      return "待处理";
+    case "Active":
+      return "进行中";
+    case "Completed":
+      return "已完成";
+    default:
+      return s;
+  }
+}
+
+function taskStatusColor(s: TaskStatus): "gray" | "indigo" | "green" {
+  switch (s) {
+    case "Pending":
+      return "gray";
+    case "Active":
+      return "indigo";
+    case "Completed":
+      return "green";
+    default:
+      return "gray";
+  }
+}
+
 
 function pageNumber(offset: number, pageSize: number): number {
   return Math.floor(offset / pageSize) + 1;
@@ -306,7 +334,7 @@ type ScheduleEntry = {
 
 function toScheduleEntries(tasks: Task[], waitingLists: WaitingList[], scheduledActions: ScheduledAction[]): ScheduleEntry[] {
   const taskEntries = tasks
-    .filter((task) => task.dueAt && task.status !== "Done" && task.status !== "Canceled")
+    .filter((task) => task.dueAt && task.status !== "Completed")
     .map(
       (task): ScheduleEntry => ({
         id: task.id,
@@ -1032,7 +1060,7 @@ export default function App() {
           labels: [],
           context: "默认",
           details: "",
-          status: "Todo",
+          status: "Pending",
           priority: "Medium",
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -2056,6 +2084,7 @@ export default function App() {
             details: drawerTask.details,
             priority: drawerTask.priority,
             dueAt: dueISO,
+            status: drawerTask.status,
           });
           setLastTaskProjectId(drawerTask.projectId ?? "");
           setHighlightTaskId(created.id);
@@ -2072,6 +2101,7 @@ export default function App() {
           details: drawerTask.details,
           priority: drawerTask.priority,
           dueAt: dueISO ?? "",
+          status: drawerTask.status,
         });
         setLastTaskProjectId(drawerTask.projectId ?? "");
         setTaskListVersion((v) => v + 1);
@@ -2306,7 +2336,7 @@ const MIN_PROJECT_COLUMN_WIDTHS: ProjectColumnWidths = {
   actions: 100,
 };
 
-type TaskColumnKey = "name" | "project" | "dueAt" | "actions";
+type TaskColumnKey = "name" | "status" | "project" | "dueAt" | "actions";
 
 type TaskColumnWidths = Record<TaskColumnKey, number>;
 
@@ -2318,6 +2348,7 @@ type TaskResizeState = {
 
 const DEFAULT_TASK_COLUMN_WIDTHS: TaskColumnWidths = {
   name: 360,
+  status: 100,
   project: 280,
   dueAt: 180,
   actions: 120,
@@ -2327,6 +2358,7 @@ const TASK_COLUMN_WIDTHS_STORAGE_KEY = "multivac:task-column-widths";
 
 const MIN_TASK_COLUMN_WIDTHS: TaskColumnWidths = {
   name: 220,
+  status: 80,
   project: 180,
   dueAt: 140,
   actions: 100,
@@ -2491,6 +2523,7 @@ function normalizeTaskColumnWidths(value: unknown): TaskColumnWidths {
   const widths = typeof value === "object" && value !== null ? value as Partial<Record<TaskColumnKey, unknown>> : {};
   return {
     name: typeof widths.name === "number" ? Math.max(MIN_TASK_COLUMN_WIDTHS.name, widths.name) : DEFAULT_TASK_COLUMN_WIDTHS.name,
+    status: typeof widths.status === "number" ? Math.max(MIN_TASK_COLUMN_WIDTHS.status, widths.status) : DEFAULT_TASK_COLUMN_WIDTHS.status,
     project: typeof widths.project === "number" ? Math.max(MIN_TASK_COLUMN_WIDTHS.project, widths.project) : DEFAULT_TASK_COLUMN_WIDTHS.project,
     dueAt: typeof widths.dueAt === "number" ? Math.max(MIN_TASK_COLUMN_WIDTHS.dueAt, widths.dueAt) : DEFAULT_TASK_COLUMN_WIDTHS.dueAt,
     actions: typeof widths.actions === "number" ? Math.max(MIN_TASK_COLUMN_WIDTHS.actions, widths.actions) : DEFAULT_TASK_COLUMN_WIDTHS.actions,
@@ -3938,6 +3971,7 @@ function TasksPageNew(props: {
         <table className="w-full min-w-[860px] table-fixed text-left text-sm">
           <colgroup>
             <col style={{ width: columnWidths.name }} />
+            <col style={{ width: columnWidths.status }} />
             <col style={{ width: columnWidths.project }} />
             <col style={{ width: columnWidths.dueAt }} />
             <col style={{ width: columnWidths.actions }} />
@@ -3945,6 +3979,7 @@ function TasksPageNew(props: {
           <thead className="bg-[#F9FAFB] text-xs text-[#6B7280]">
             <tr>
               {headerCell("下一步", "name")}
+              {headerCell("状态", "status")}
               {headerCell("所属项目", "project")}
               {headerCell("截止日期", "dueAt")}
               {headerCell("操作", "actions", true)}
@@ -3953,7 +3988,7 @@ function TasksPageNew(props: {
           <tbody>
             {items.length === 0 && !loading ? (
               <tr>
-                <td colSpan={4} className="px-4 py-10 text-center text-[#6B7280]">
+                <td colSpan={5} className="px-4 py-10 text-center text-[#6B7280]">
                   暂无下一步
                 </td>
               </tr>
@@ -3969,6 +4004,11 @@ function TasksPageNew(props: {
               >
                 <td className="px-4 py-3">
                   <div className="font-medium text-[#111827]">{t.name}</div>
+                </td>
+                <td className="px-4 py-3">
+                  <Badge color={taskStatusColor(t.status)}>
+                    {taskStatusLabel(t.status)}
+                  </Badge>
                 </td>
                 <td className="px-4 py-3 text-[#6B7280]">{projectNameById.get(t.projectId ?? "") ?? "-"}</td>
                 <td className="px-4 py-3 text-[#6B7280]">

@@ -34,14 +34,14 @@ export type UpdateScheduledActionInput = CreateScheduledActionInput;
 
 function fromAction(action: Action): ScheduledAction | null {
   if (action.kind !== "Scheduled") return null;
-  const startAt = action.attributes.scheduled?.start_at;
-  const endAt = action.attributes.scheduled?.end_at;
+  const startAt = action.attributes.scheduled?.startAt;
+  const endAt = action.attributes.scheduled?.endAt;
   if (!startAt || !endAt) return null;
   return {
     id: action.id,
     title: action.title,
     description: action.description,
-    projectId: action.project_id,
+    projectId: action.projectId,
     context: action.context,
     labels: action.labels,
     startAt,
@@ -68,14 +68,14 @@ export async function createScheduledAction(input: CreateScheduledActionInput): 
   const action = await createAction({
     title: input.title,
     description: input.description,
-    project_id: input.projectId,
+    projectId: input.projectId,
     kind: "Scheduled",
     context: input.context ?? [],
     labels: input.labels ?? [],
     attributes: {
       scheduled: {
-        start_at: input.startAt,
-        end_at: input.endAt,
+        startAt: input.startAt,
+        endAt: input.endAt,
       },
     },
   });
@@ -91,14 +91,14 @@ export async function updateScheduledAction(id: string, input: UpdateScheduledAc
   const action = await updateAction(id, {
     title: input.title,
     description: input.description,
-    project_id: input.projectId,
+    projectId: input.projectId,
     kind: "Scheduled",
     context: input.context ?? [],
     labels: input.labels ?? [],
     attributes: {
       scheduled: {
-        start_at: input.startAt,
-        end_at: input.endAt,
+        startAt: input.startAt,
+        endAt: input.endAt,
       },
     },
   });

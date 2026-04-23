@@ -39,18 +39,49 @@ type Label struct {
 	Name string `json:"name"`
 }
 
+type TaskStatus string
+
+const (
+	TaskStatusPending   TaskStatus = "Pending"
+	TaskStatusActive    TaskStatus = "Active"
+	TaskStatusCompleted TaskStatus = "Completed"
+)
+
+func (s TaskStatus) Valid() bool {
+	switch s {
+	case TaskStatusPending, TaskStatusActive, TaskStatusCompleted:
+		return true
+	default:
+		return false
+	}
+}
+
+func ParseTaskStatus(v string) (TaskStatus, bool) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "pending":
+		return TaskStatusPending, true
+	case "active":
+		return TaskStatusActive, true
+	case "completed":
+		return TaskStatusCompleted, true
+	default:
+		return "", false
+	}
+}
+
 type TaskAttributes struct {
-	ExpectedAt *time.Time `json:"expected_at,omitempty"`
+	ExpectedAt *time.Time `json:"expectedAt,omitempty"`
+	Status     TaskStatus `json:"status"`
 }
 
 type WaitingAttributes struct {
 	Delegatee string     `json:"delegatee"`
-	DueAt     *time.Time `json:"due_at,omitempty"`
+	DueAt     *time.Time `json:"dueAt,omitempty"`
 }
 
 type ScheduledAttributes struct {
-	StartAt *time.Time `json:"start_at,omitempty"`
-	EndAt   *time.Time `json:"end_at,omitempty"`
+	StartAt *time.Time `json:"startAt,omitempty"`
+	EndAt   *time.Time `json:"endAt,omitempty"`
 }
 
 type Attributes struct {
@@ -176,12 +207,15 @@ func normalizeAttributes(kind Kind, attributes Attributes) Attributes {
 	switch kind {
 	case KindTask:
 		if attributes.Task == nil {
-			out.Task = &TaskAttributes{}
+			out.Task = &TaskAttributes{Status: TaskStatusPending}
 		} else {
 			task := *attributes.Task
 			if task.ExpectedAt != nil {
 				t := task.ExpectedAt.UTC()
 				task.ExpectedAt = &t
+			}
+			if task.Status == "" {
+				task.Status = TaskStatusPending
 			}
 			out.Task = &task
 		}
@@ -240,6 +274,9 @@ func validateAttributes(kind Kind, attributes Attributes) error {
 		if attributes.Task == nil {
 			return &ValidationError{Problems: []string{"attributes.task: Required value"}}
 		}
+		if !attributes.Task.Status.Valid() {
+			return InvalidStatus(string(attributes.Task.Status))
+		}
 	case KindWaiting:
 		if attributes.Waiting == nil {
 			return &ValidationError{Problems: []string{"attributes.waiting: Required value"}}
@@ -248,20 +285,20 @@ func validateAttributes(kind Kind, attributes Attributes) error {
 			return &ValidationError{Problems: []string{"attributes.waiting.delegatee: Required value"}}
 		}
 		if attributes.Waiting.DueAt == nil || attributes.Waiting.DueAt.IsZero() {
-			return &ValidationError{Problems: []string{"attributes.waiting.due_at: Required value"}}
+			return &ValidationError{Problems: []string{"attributes.waiting.dueAt: Required value"}}
 		}
 	case KindScheduled:
 		if attributes.Scheduled == nil {
 			return &ValidationError{Problems: []string{"attributes.scheduled: Required value"}}
 		}
 		if attributes.Scheduled.StartAt == nil || attributes.Scheduled.StartAt.IsZero() {
-			return &ValidationError{Problems: []string{"attributes.scheduled.start_at: Required value"}}
+			return &ValidationError{Problems: []string{"attributes.scheduled.startAt: Required value"}}
 		}
 		if attributes.Scheduled.EndAt == nil || attributes.Scheduled.EndAt.IsZero() {
-			return &ValidationError{Problems: []string{"attributes.scheduled.end_at: Required value"}}
+			return &ValidationError{Problems: []string{"attributes.scheduled.endAt: Required value"}}
 		}
 		if attributes.Scheduled.EndAt.Before(*attributes.Scheduled.StartAt) {
-			return &ValidationError{Problems: []string{"attributes.scheduled.end_at: Unsupported value"}}
+			return &ValidationError{Problems: []string{"attributes.scheduled.endAt: Unsupported value"}}
 		}
 	default:
 		return InvalidKind(string(kind))

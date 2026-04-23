@@ -79,6 +79,13 @@ func toActionDomain(row actionRow) (*domain.Action, error) {
 	if err != nil {
 		return nil, err
 	}
+	if kind == domain.KindTask {
+		if attributes.Task == nil {
+			attributes.Task = &domain.TaskAttributes{Status: domain.TaskStatusPending}
+		} else if attributes.Task.Status == "" {
+			attributes.Task.Status = domain.TaskStatusPending
+		}
+	}
 	action := &domain.Action{
 		ID:          row.ID,
 		Title:       row.Title,
@@ -163,6 +170,9 @@ func unmarshalAttributes(raw []byte) (domain.Attributes, error) {
 	var attributes domain.Attributes
 	if err := json.Unmarshal(raw, &attributes); err != nil {
 		return domain.Attributes{}, err
+	}
+	if attributes.Task != nil && attributes.Task.Status == "" {
+		attributes.Task.Status = domain.TaskStatusPending
 	}
 	return attributes, nil
 }
@@ -387,7 +397,7 @@ func (r *ActionRepository) ConvertFromInbox(ctx context.Context, inboxID string,
 	if kind != nil {
 		finalKind = *kind
 	}
-	finalAttributes := domain.Attributes{Task: &domain.TaskAttributes{}}
+	finalAttributes := domain.Attributes{Task: &domain.TaskAttributes{Status: domain.TaskStatusPending}}
 	if attributes != nil {
 		finalAttributes = *attributes
 	}

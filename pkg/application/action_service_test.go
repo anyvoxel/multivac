@@ -40,6 +40,8 @@ func TestActionServiceCreateGeneratesULIDAndUTCFields(t *testing.T) {
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(loaded.Title).To(gomega.Equal("Action"))
 	g.Expect(loaded.Description).To(gomega.Equal("body"))
+	g.Expect(loaded.Attributes.Task).ToNot(gomega.BeNil())
+	g.Expect(loaded.Attributes.Task.Status).To(gomega.Equal(actiondomain.TaskStatusPending))
 }
 
 func TestActionServiceConvertFromInboxKeepsIDAndRemovesInbox(t *testing.T) {
