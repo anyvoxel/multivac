@@ -1,11 +1,16 @@
 import {
-  createItem,
-  deleteItem,
-  getItem,
-  listItems,
-  updateItem,
-} from "./items";
-import type { Item, ItemBucket, ItemSortBy, SortDir } from "./items";
+  createAction,
+  deleteAction,
+  getAction,
+  listActions,
+  updateAction,
+} from "./actions";
+import type {
+  Action,
+  ActionAttributes,
+  ActionSortBy,
+} from "./actions";
+import type { SortDir } from "./items";
 
 export type WaitingList = {
   id: string;
@@ -36,91 +41,126 @@ export type ListWaitingListsQuery = {
   offset?: number;
 };
 
-function mapSortBy(sortBy?: WaitingListSortBy): ItemSortBy | undefined {
+function mapSortBy(sortBy?: WaitingListSortBy): ActionSortBy | undefined {
   switch (sortBy) {
     case "Name":
-      return "Title";
+      return "Name";
     case "CreatedAt":
       return "CreatedAt";
     case "UpdatedAt":
       return "UpdatedAt";
-    case "ExpectedAt":
-      return "ExpectedAt";
     default:
       return undefined;
   }
 }
 
-function fromItem(item: Item): WaitingList {
+function toWaitingAttributes(owner: string, expectedAt?: string): ActionAttributes {
   return {
-    id: item.id,
-    name: item.title,
-    details: item.details,
-    owner: item.waitingFor ?? "",
-    expectedAt: item.expectedAt,
-    createdAt: item.createdAt,
-    updatedAt: item.updatedAt,
+    waiting: {
+      delegatee: owner,
+      due_at: expectedAt,
+    },
   };
 }
 
-function waitingListBucket(): ItemBucket {
-  return "WaitingFor";
+function fromAction(action: Action): WaitingList {
+  return {
+    id: action.id,
+    name: action.title,
+    details: action.description,
+    owner: action.attributes.waiting?.delegatee ?? "",
+    expectedAt: action.attributes.waiting?.due_at,
+    createdAt: action.createdAt,
+    updatedAt: action.updatedAt,
+  };
+}
+
+function expectedAtTimestamp(value?: string): number | null {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  return Number.isNaN(timestamp) ? null : timestamp;
+}
+
+function sortByExpectedAt(list: WaitingList[], dir: SortDir): WaitingList[] {
+  return list
+    .map((item, index) => ({ item, index, timestamp: expectedAtTimestamp(item.expectedAt) }))
+    .sort((a, b) => {
+      const aNil = a.timestamp === null;
+      const bNil = b.timestamp === null;
+      if (aNil && bNil) return a.index - b.index;
+      if (aNil) return 1;
+      if (bNil) return -1;
+      const left = a.timestamp as number;
+      const right = b.timestamp as number;
+      const delta = left - right;
+      if (delta !== 0) {
+        return dir === "Desc" ? -delta : delta;
+      }
+      return a.index - b.index;
+    })
+    .map((x) => x.item);
 }
 
 export async function listWaitingLists(q?: ListWaitingListsQuery): Promise<WaitingList[]> {
-  const items = await listItems({
-    kind: "WaitingFor",
-    bucket: waitingListBucket(),
+  const sortByExpected = q?.sortBy === "ExpectedAt";
+  const actions = await listActions({
     search: q?.search,
-    sortBy: mapSortBy(q?.sortBy),
+    kind: "Waiting",
+    sortBy: sortByExpected ? undefined : mapSortBy(q?.sortBy),
     sortDir: q?.sortDir,
-    limit: q?.limit,
-    offset: q?.offset,
+    limit: sortByExpected ? undefined : q?.limit,
+    offset: sortByExpected ? undefined : q?.offset,
   });
-  return items.map(fromItem);
+
+  let list = actions.filter((action) => action.kind === "Waiting").map(fromAction);
+
+  if (!sortByExpected) {
+    return list;
+  }
+
+  list = sortByExpectedAt(list, q?.sortDir ?? "Asc");
+  const offset = q?.offset ?? 0;
+  if (offset > 0) {
+    list = list.slice(offset);
+  }
+  if (q?.limit !== undefined) {
+    list = list.slice(0, q.limit);
+  }
+  return list;
 }
 
 export async function getWaitingList(id: string): Promise<WaitingList> {
-  return fromItem(await getItem(id));
+  return fromAction(await getAction(id));
 }
 
 export async function createWaitingList(input: CreateWaitingListInput): Promise<WaitingList> {
-  return fromItem(
-    await createItem({
-      kind: "WaitingFor",
-      bucket: waitingListBucket(),
+  return fromAction(
+    await createAction({
       title: input.name,
-      description: "",
+      description: input.details,
+      kind: "Waiting",
+      context: [],
       labels: [],
-      context: "",
-      details: input.details,
-      waitingFor: input.owner,
-      expectedAt: input.expectedAt,
+      attributes: toWaitingAttributes(input.owner, input.expectedAt),
     }),
   );
 }
 
 export async function updateWaitingList(id: string, input: UpdateWaitingListInput): Promise<WaitingList> {
-  const current = await getItem(id);
-  return fromItem(
-    await updateItem(id, {
-      kind: current.kind,
-      bucket: current.bucket,
-      projectId: current.projectId,
+  const current = await getAction(id);
+  return fromAction(
+    await updateAction(id, {
       title: input.name,
-      description: current.description,
-      labels: current.labels,
+      description: input.details,
+      project_id: current.project_id,
+      kind: "Waiting",
       context: current.context,
-      details: input.details,
-      taskStatus: current.taskStatus,
-      priority: current.priority,
-      waitingFor: input.owner,
-      expectedAt: input.expectedAt,
-      dueAt: current.dueAt,
+      labels: current.labels,
+      attributes: toWaitingAttributes(input.owner, input.expectedAt),
     }),
   );
 }
 
 export async function deleteWaitingList(id: string): Promise<void> {
-  await deleteItem(id);
+  await deleteAction(id);
 }
