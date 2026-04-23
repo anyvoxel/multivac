@@ -49,8 +49,8 @@ func (s *Service) Migrate(ctx context.Context) error {
 
 // Create creates a new project.
 func (s *Service) Create(ctx context.Context, cmd CreateProjectCmd) (*domain.Project, error) {
-	now := s.now()
-	id, err := id.New("p")
+	now := s.now().UTC()
+	id, err := id.NewULIDAt(now)
 	if err != nil {
 		return nil, err
 	}

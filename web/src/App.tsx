@@ -76,6 +76,13 @@ import {
 } from "./lib/waitingLists";
 import type { WaitingList } from "./lib/waitingLists";
 import {
+  createScheduledAction,
+  deleteScheduledAction,
+  listScheduledActions,
+  updateScheduledAction,
+} from "./lib/scheduledActions";
+import type { ScheduledAction } from "./lib/scheduledActions";
+import {
   addDays,
   formatDate,
   formatDateTime,
@@ -115,6 +122,13 @@ const SCHEDULE_WEEK_STARTS_ON = 0;
 type ProjectDrawerState = Project;
 type ContextDrawerState = ManagedContext;
 type ReferenceDrawerState = ManagedReference;
+
+type ScheduledDraft = {
+  title: string;
+  description: string;
+  startAt?: string;
+  endAt?: string;
+};
 
 function parseLabelFilterInput(input: string): string[] {
   const seen = new Set<string>();
@@ -224,6 +238,17 @@ function createEmptyReference(): ReferenceDrawerState {
   };
 }
 
+function createScheduledDraftAtDay(day: Date): ScheduledDraft {
+  const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 9, 0, 0, 0);
+  const end = new Date(start.getTime() + 60*60*1000);
+  return {
+    title: "",
+    description: "",
+    startAt: start.toISOString(),
+    endAt: end.toISOString(),
+  };
+}
+
 function allowedProjectStatuses(project: ProjectDrawerState, mode: "create" | "edit"): ProjectStatus[] {
   return mode === "create" ? PROJECT_CREATE_STATUSES : PROJECT_STATUS_TRANSITIONS[project.status] ?? PROJECT_STATUSES;
 }
@@ -267,16 +292,19 @@ function pageNumber(offset: number, pageSize: number): number {
 
 type ScheduleEntry = {
   id: string;
-  kind: "Task" | "WaitingFor";
+  kind: "Task" | "WaitingFor" | "Scheduled";
   title: string;
   dateISO: string;
   projectId?: string;
   owner?: string;
+  startAt?: string;
+  endAt?: string;
   task?: Task;
   waitingList?: WaitingList;
+  scheduledAction?: ScheduledAction;
 };
 
-function toScheduleEntries(tasks: Task[], waitingLists: WaitingList[]): ScheduleEntry[] {
+function toScheduleEntries(tasks: Task[], waitingLists: WaitingList[], scheduledActions: ScheduledAction[]): ScheduleEntry[] {
   const taskEntries = tasks
     .filter((task) => task.dueAt && task.status !== "Done" && task.status !== "Canceled")
     .map(
@@ -303,17 +331,34 @@ function toScheduleEntries(tasks: Task[], waitingLists: WaitingList[]): Schedule
       }),
     );
 
-  return [...taskEntries, ...waitingEntries].sort(
+  const scheduledEntries = scheduledActions.map(
+    (action): ScheduleEntry => ({
+      id: action.id,
+      kind: "Scheduled",
+      title: action.title,
+      dateISO: action.startAt,
+      projectId: action.projectId,
+      startAt: action.startAt,
+      endAt: action.endAt,
+      scheduledAction: action,
+    }),
+  );
+
+  return [...taskEntries, ...waitingEntries, ...scheduledEntries].sort(
     (a, b) => new Date(a.dateISO).getTime() - new Date(b.dateISO).getTime(),
   );
 }
 
-function entryBadgeColor(entry: ScheduleEntry): "indigo" | "amber" {
-  return entry.kind === "Task" ? "indigo" : "amber";
+function entryBadgeColor(entry: ScheduleEntry): "indigo" | "amber" | "green" {
+  if (entry.kind === "Task") return "indigo";
+  if (entry.kind === "WaitingFor") return "amber";
+  return "green";
 }
 
 function entryBadgeLabel(entry: ScheduleEntry): string {
-  return entry.kind === "Task" ? "任务" : "等待中";
+  if (entry.kind === "Task") return "任务";
+  if (entry.kind === "WaitingFor") return "等待中";
+  return "日程";
 }
 
 function IconLogo() {
@@ -616,6 +661,10 @@ export default function App() {
   const [scheduleError, setScheduleError] = useState<string>("");
   const [scheduleTasks, setScheduleTasks] = useState<Task[]>([]);
   const [scheduleWaitingLists, setScheduleWaitingLists] = useState<WaitingList[]>([]);
+  const [scheduleActions, setScheduleActions] = useState<ScheduledAction[]>([]);
+  const [createScheduledDraft, setCreateScheduledDraft] = useState<ScheduledDraft | null>(null);
+  const [createScheduledSaving, setCreateScheduledSaving] = useState(false);
+  const [createScheduledError, setCreateScheduledError] = useState("");
 
   // Drawer state
   const [drawer, setDrawer] = useState<
@@ -634,6 +683,7 @@ export default function App() {
     | { type: "someday"; mode: "edit"; id: string }
     | { type: "waitingList"; mode: "create" }
     | { type: "waitingList"; mode: "edit"; id: string }
+    | { type: "scheduled"; mode: "edit"; id: string }
   >({ type: "none" });
   const [drawerLoading, setDrawerLoading] = useState(false);
   const [drawerSaving, setDrawerSaving] = useState(false);
@@ -645,6 +695,7 @@ export default function App() {
   const [drawerReference, setDrawerReference] = useState<ReferenceDrawerState | null>(null);
   const [drawerSomeday, setDrawerSomeday] = useState<Someday | null>(null);
   const [drawerWaitingList, setDrawerWaitingList] = useState<WaitingList | null>(null);
+  const [drawerScheduledAction, setDrawerScheduledAction] = useState<ScheduledAction | null>(null);
 
   // Tasks page filters
   const [taskProjectId, setTaskProjectId] = useState<string>("");
@@ -676,6 +727,17 @@ export default function App() {
     setDrawerReference(null);
     setDrawerSomeday(null);
     setDrawerWaitingList(null);
+    setDrawerScheduledAction(null);
+  }
+
+  function closeCreateScheduledDialog() {
+    setCreateScheduledDraft(null);
+    setCreateScheduledError("");
+  }
+
+  function openCreateScheduledDialog(day: Date) {
+    setCreateScheduledError("");
+    setCreateScheduledDraft(createScheduledDraftAtDay(day));
   }
 
   useEffect(() => {
@@ -815,7 +877,7 @@ export default function App() {
     setScheduleLoading(true);
     setScheduleError("");
     try {
-      const [tasks, lists] = await Promise.all([
+      const [tasks, lists, actions] = await Promise.all([
         listTasks({
           search: normalizedSearch || undefined,
           contexts: normalizedContexts.length ? normalizedContexts : undefined,
@@ -824,9 +886,11 @@ export default function App() {
           sortDir: "Asc",
         }),
         listWaitingLists({ search: normalizedSearch || undefined, sortBy: "ExpectedAt", sortDir: "Asc" }),
+        listScheduledActions({ search: normalizedSearch || undefined }),
       ]);
       setScheduleTasks(tasks);
       setScheduleWaitingLists(lists);
+      setScheduleActions(actions);
     } catch (e) {
       setScheduleError(String(e));
     } finally {
@@ -919,6 +983,7 @@ export default function App() {
     setDrawerReference(null);
     setDrawerSomeday(null);
     setDrawerWaitingList(null);
+    setDrawerScheduledAction(null);
     setDrawerLoading(true);
     setError("");
     try {
@@ -946,6 +1011,7 @@ export default function App() {
     setDrawerReference(null);
     setDrawerSomeday(null);
     setDrawerWaitingList(null);
+    setDrawerScheduledAction(null);
     setDrawerLoading(true);
     setError("");
     try {
@@ -996,6 +1062,7 @@ export default function App() {
     setDrawerReference(null);
     setDrawerSomeday(null);
     setDrawerWaitingList(null);
+    setDrawerScheduledAction(null);
     setDrawerLoading(true);
     setInboxError("");
     try {
@@ -1033,6 +1100,7 @@ export default function App() {
     setDrawerReference(null);
     setDrawerSomeday(null);
     setDrawerWaitingList(null);
+    setDrawerScheduledAction(null);
     setDrawerLoading(true);
     setContextError("");
     try {
@@ -1064,6 +1132,7 @@ export default function App() {
     setDrawerReference(null);
     setDrawerSomeday(null);
     setDrawerWaitingList(null);
+    setDrawerScheduledAction(null);
     setDrawerLoading(true);
     setReferenceError("");
     try {
@@ -1095,6 +1164,7 @@ export default function App() {
     setDrawerReference(null);
     setDrawerSomeday(null);
     setDrawerWaitingList(null);
+    setDrawerScheduledAction(null);
     setDrawerLoading(true);
     setSomedayError("");
     try {
@@ -1132,6 +1202,7 @@ export default function App() {
     setDrawerReference(null);
     setDrawerSomeday(null);
     setDrawerWaitingList(null);
+    setDrawerScheduledAction(null);
     setDrawerLoading(true);
     setWaitingListError("");
     try {
@@ -1158,6 +1229,35 @@ export default function App() {
       setDrawerWaitingList(found);
     } catch (e) {
       setWaitingListError(String(e));
+    } finally {
+      setDrawerLoading(false);
+    }
+  }
+
+  async function openScheduledDrawer(id: string, action?: ScheduledAction) {
+    setDrawerProject(null);
+    setDrawerTask(null);
+    setDrawerInbox(null);
+    setDrawerContext(null);
+    setDrawerReference(null);
+    setDrawerSomeday(null);
+    setDrawerWaitingList(null);
+    setDrawerScheduledAction(null);
+    setDrawerLoading(true);
+    setScheduleError("");
+    try {
+      setDrawer({ type: "scheduled", mode: "edit", id });
+      if (action) {
+        setDrawerScheduledAction(action);
+        return;
+      }
+      const found = scheduleActions.find((item) => item.id === id);
+      if (!found) {
+        throw new Error("未找到日程");
+      }
+      setDrawerScheduledAction(found);
+    } catch (e) {
+      setScheduleError(String(e));
     } finally {
       setDrawerLoading(false);
     }
@@ -1279,6 +1379,40 @@ export default function App() {
       default:
         await refreshProjects();
         return;
+    }
+  }
+
+  async function onCreateScheduledAction() {
+    if (!createScheduledDraft) return;
+    setCreateScheduledSaving(true);
+    setCreateScheduledError("");
+    try {
+      const title = createScheduledDraft.title.trim();
+      if (!title) throw new Error("日程标题不能为空");
+      if (!createScheduledDraft.startAt || !createScheduledDraft.endAt) {
+        throw new Error("开始时间和结束时间不能为空");
+      }
+      const startAt = Date.parse(createScheduledDraft.startAt);
+      const endAt = Date.parse(createScheduledDraft.endAt);
+      if (Number.isNaN(startAt) || Number.isNaN(endAt)) {
+        throw new Error("时间格式不正确");
+      }
+      if (endAt < startAt) {
+        throw new Error("结束时间不能早于开始时间");
+      }
+
+      await createScheduledAction({
+        title,
+        description: createScheduledDraft.description,
+        startAt: createScheduledDraft.startAt,
+        endAt: createScheduledDraft.endAt,
+      });
+      await refreshSchedule();
+      closeCreateScheduledDialog();
+    } catch (e) {
+      setCreateScheduledError(String(e));
+    } finally {
+      setCreateScheduledSaving(false);
     }
   }
 
@@ -1557,6 +1691,7 @@ export default function App() {
               <SchedulePage
                 tasks={scheduleTasks}
                 waitingLists={scheduleWaitingLists}
+                scheduledActions={scheduleActions}
                 projects={allProjects}
                 loading={scheduleLoading}
                 onRefresh={() => void refreshSchedule()}
@@ -1564,6 +1699,8 @@ export default function App() {
                 onOpenWaitingList={(id, waitingList) =>
                   void openWaitingListDrawer("edit", id, waitingList)
                 }
+                onOpenScheduled={(id, action) => void openScheduledDrawer(id, action)}
+                onCreateScheduledAtDay={(day) => openCreateScheduledDialog(day)}
               />
             ) : route === "somedays" ? (
               <SomedaysPage
@@ -1594,6 +1731,77 @@ export default function App() {
             )}
           </main>
         </div>
+
+        {createScheduledDraft ? (
+          <CenteredDialog
+            title="新建日程 Action"
+            onClose={closeCreateScheduledDialog}
+            action={
+              <button
+                className={classNames(
+                  "rounded-md px-3 py-1.5 text-sm font-medium",
+                  createScheduledSaving
+                    ? "cursor-not-allowed bg-[#E5E7EB] text-[#9CA3AF]"
+                    : "bg-[#4F46E5] text-white hover:opacity-90",
+                )}
+                type="button"
+                disabled={createScheduledSaving}
+                onClick={() => void onCreateScheduledAction()}
+              >
+                保存
+              </button>
+            }
+          >
+            <div className="grid gap-3 px-6 py-4">
+              {createScheduledError ? (
+                <div className="rounded-md border border-[#FCA5A5] bg-[#FEF2F2] px-3 py-2 text-sm text-[#B91C1C]">
+                  {createScheduledError}
+                </div>
+              ) : null}
+              <Field label="标题">
+                <TextInput
+                  value={createScheduledDraft.title}
+                  onChange={(v) => setCreateScheduledDraft((prev) => (prev ? { ...prev, title: v } : prev))}
+                />
+              </Field>
+              <Field label="描述（可选）">
+                <TextArea
+                  value={createScheduledDraft.description}
+                  onChange={(v) => setCreateScheduledDraft((prev) => (prev ? { ...prev, description: v } : prev))}
+                  rows={4}
+                />
+              </Field>
+              <Field label="开始时间">
+                <input
+                  className="w-full rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm"
+                  type="datetime-local"
+                  value={toDateTimeLocalValue(createScheduledDraft.startAt)}
+                  onChange={(e) =>
+                    setCreateScheduledDraft((prev) =>
+                      prev
+                        ? { ...prev, startAt: e.target.value ? fromDateTimeLocalValue(e.target.value) : undefined }
+                        : prev,
+                    )
+                  }
+                />
+              </Field>
+              <Field label="结束时间">
+                <input
+                  className="w-full rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm"
+                  type="datetime-local"
+                  value={toDateTimeLocalValue(createScheduledDraft.endAt)}
+                  onChange={(e) =>
+                    setCreateScheduledDraft((prev) =>
+                      prev
+                        ? { ...prev, endAt: e.target.value ? fromDateTimeLocalValue(e.target.value) : undefined }
+                        : prev,
+                    )
+                  }
+                />
+              </Field>
+            </div>
+          </CenteredDialog>
+        ) : null}
 
         {drawer.type === "project" || drawer.type === "inbox" || drawer.type === "context" || drawer.type === "reference" ? (
           <CenteredDialog
@@ -1682,7 +1890,15 @@ export default function App() {
           </CenteredDialog>
         ) : drawer.type !== "none" ? (
           <Drawer
-            title={drawer.type === "task" ? "下一步详情" : drawer.type === "someday" ? "将来/也许详情" : "等待列表详情"}
+            title={
+              drawer.type === "task"
+                ? "下一步详情"
+                : drawer.type === "someday"
+                  ? "将来/也许详情"
+                  : drawer.type === "waitingList"
+                    ? "等待列表详情"
+                    : "日程详情"
+            }
             onClose={closeDrawer}
             action={
               <button
@@ -1731,7 +1947,7 @@ export default function App() {
                   setDrawerSomeday(null);
                 }}
               />
-            ) : (
+            ) : drawer.type === "waitingList" ? (
               <WaitingListDrawerForm
                 waitingList={drawerWaitingList}
                 mode={drawer.mode}
@@ -1743,6 +1959,20 @@ export default function App() {
                   await refreshWaitingLists();
                   setDrawer({ type: "none" });
                   setDrawerWaitingList(null);
+                }}
+              />
+            ) : (
+              <ScheduledDrawerForm
+                action={drawerScheduledAction}
+                mode={drawer.mode}
+                onChange={setDrawerScheduledAction}
+                onDelete={async () => {
+                  if (!drawerScheduledAction) return;
+                  if (!confirm(`确定删除日程: ${drawerScheduledAction.title} ?`)) return;
+                  await deleteScheduledAction(drawerScheduledAction.id);
+                  await refreshSchedule();
+                  setDrawer({ type: "none" });
+                  setDrawerScheduledAction(null);
                 }}
               />
             )}
@@ -1952,6 +2182,37 @@ export default function App() {
         }
         await refreshWaitingLists();
         closeDrawer();
+        return;
+      }
+
+      if (drawer.type === "scheduled") {
+        if (!drawerScheduledAction) return;
+        const title = drawerScheduledAction.title.trim();
+        if (!title) throw new Error("日程标题不能为空");
+        if (!drawerScheduledAction.startAt || !drawerScheduledAction.endAt) {
+          throw new Error("开始时间和结束时间不能为空");
+        }
+        const startAt = Date.parse(drawerScheduledAction.startAt);
+        const endAt = Date.parse(drawerScheduledAction.endAt);
+        if (Number.isNaN(startAt) || Number.isNaN(endAt)) {
+          throw new Error("时间格式不正确");
+        }
+        if (endAt < startAt) {
+          throw new Error("结束时间不能早于开始时间");
+        }
+
+        await updateScheduledAction(drawerScheduledAction.id, {
+          title,
+          description: drawerScheduledAction.description,
+          projectId: drawerScheduledAction.projectId,
+          context: drawerScheduledAction.context,
+          labels: drawerScheduledAction.labels,
+          startAt: drawerScheduledAction.startAt,
+          endAt: drawerScheduledAction.endAt,
+        });
+        await refreshSchedule();
+        closeDrawer();
+        return;
       }
     } catch (e) {
       const message = String(e);
@@ -1965,6 +2226,8 @@ export default function App() {
         setSomedayError(message);
       } else if (drawer.type === "waitingList") {
         setWaitingListError(message);
+      } else if (drawer.type === "scheduled") {
+        setScheduleError(message);
       } else {
         setError(message);
       }
@@ -3268,17 +3531,20 @@ function SomedaysPage(props: {
 function SchedulePage(props: {
   tasks: Task[];
   waitingLists: WaitingList[];
+  scheduledActions: ScheduledAction[];
   projects: Project[];
   loading: boolean;
   onRefresh: () => void;
   onOpenTask: (id: string, task?: Task) => void;
   onOpenWaitingList: (id: string, waitingList?: WaitingList) => void;
+  onOpenScheduled: (id: string, action?: ScheduledAction) => void;
+  onCreateScheduledAtDay: (day: Date) => void;
 }) {
   const [weekAnchor, setWeekAnchor] = useState(() => startOfLocalDay(new Date()));
 
   const scheduleEntries = useMemo(
-    () => toScheduleEntries(props.tasks, props.waitingLists),
-    [props.tasks, props.waitingLists],
+    () => toScheduleEntries(props.tasks, props.waitingLists, props.scheduledActions),
+    [props.tasks, props.waitingLists, props.scheduledActions],
   );
   const today = useMemo(() => startOfLocalDay(new Date()), []);
   const tomorrow = useMemo(() => addDays(today, 1), [today]);
@@ -3315,6 +3581,11 @@ function SchedulePage(props: {
     }
     if (entry.kind === "WaitingFor" && entry.waitingList) {
       props.onOpenWaitingList(entry.id, entry.waitingList);
+      return;
+    }
+    if (entry.kind === "Scheduled" && entry.scheduledAction) {
+      props.onOpenScheduled(entry.id, entry.scheduledAction);
+      return;
     }
   }
 
@@ -3324,7 +3595,16 @@ function SchedulePage(props: {
         ? entry.projectId
           ? projectNameById.get(entry.projectId) || "未命名项目"
           : "未关联项目"
-        : entry.owner || "未指定负责人";
+        : entry.kind === "WaitingFor"
+          ? entry.owner || "未指定负责人"
+          : `${formatDateTime(entry.startAt || entry.dateISO)} - ${formatDateTime(entry.endAt || entry.dateISO)}`;
+
+    const cardClass =
+      entry.kind === "Task"
+        ? "border-[#C7D2FE] bg-[#EEF2FF]/60"
+        : entry.kind === "WaitingFor"
+          ? "border-[#FDE68A] bg-[#FFFBEB]"
+          : "border-[#A7F3D0] bg-[#ECFDF5]";
 
     return (
       <button
@@ -3332,10 +3612,13 @@ function SchedulePage(props: {
         type="button"
         className={classNames(
           "grid w-full gap-2 rounded-lg border px-3 py-2 text-left transition-colors hover:bg-[#F9FAFB]",
-          entry.kind === "Task" ? "border-[#C7D2FE] bg-[#EEF2FF]/60" : "border-[#FDE68A] bg-[#FFFBEB]",
+          cardClass,
           compact && "px-2 py-2",
         )}
-        onClick={() => openEntry(entry)}
+        onClick={(e) => {
+          e.stopPropagation();
+          openEntry(entry);
+        }}
       >
         <div className="flex items-center gap-2">
           <Badge color={entryBadgeColor(entry)}>{entryBadgeLabel(entry)}</Badge>
@@ -3373,7 +3656,7 @@ function SchedulePage(props: {
       <div className="flex items-center justify-between">
         <div className="grid gap-1">
           <div className="text-lg font-semibold text-[#111827]">日程</div>
-          <div className="text-sm text-[#6B7280]">聚合任务截止日期与等待中预期完成时间</div>
+          <div className="text-sm text-[#6B7280]">聚合任务截止日期、等待中预期完成时间与日程安排</div>
         </div>
         <button
           className="flex items-center gap-1 rounded-md border border-[#E6E8F0] bg-white px-3 py-1 text-sm text-[#374151] hover:bg-[#F5F6FA]"
@@ -3440,9 +3723,25 @@ function SchedulePage(props: {
             const key = toLocalDateKey(day);
             const entries = entriesByDate[key] || [];
             return (
-              <div key={key} className="min-h-[260px] border-r border-[#E5E7EB] last:border-r-0">
+              <div
+                key={key}
+                className="min-h-[260px] border-r border-[#E5E7EB] last:border-r-0 hover:bg-[#F3F4F6]/50"
+                onClick={() => props.onCreateScheduledAtDay(day)}
+              >
                 <div className="border-b border-[#E5E7EB] bg-white px-3 py-3">
-                  <div className="text-xs text-[#6B7280]">{formatWeekdayShort(day)}</div>
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs text-[#6B7280]">{formatWeekdayShort(day)}</div>
+                    <button
+                      type="button"
+                      className="rounded border border-[#E6E8F0] px-1.5 py-0.5 text-[10px] text-[#4F46E5] hover:bg-[#EEF2FF]"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        props.onCreateScheduledAtDay(day);
+                      }}
+                    >
+                      + 日程
+                    </button>
+                  </div>
                   <div className="mt-1 text-lg font-semibold text-[#111827]">{day.getDate()}</div>
                 </div>
                 <div className="grid gap-2 p-3">
@@ -4702,6 +5001,64 @@ function WaitingListDrawerForm(props: {
           type="datetime-local"
           value={toDateTimeLocalValue(waitingList.expectedAt)}
           onChange={(e) => props.onChange({ ...waitingList, expectedAt: e.target.value ? fromDateTimeLocalValue(e.target.value) : undefined })}
+        />
+      </Field>
+
+      {props.mode === "edit" ? (
+        <div className="pt-2">
+          <button
+            className="rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm text-[#DC2626] hover:bg-[#F5F6FA]"
+            type="button"
+            onClick={() => void props.onDelete()}
+          >
+            删除
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ScheduledDrawerForm(props: {
+  action: ScheduledAction | null;
+  mode: "edit";
+  onChange: (action: ScheduledAction | null) => void;
+  onDelete: () => Promise<void>;
+}) {
+  const action = props.action;
+  if (!action) return <div className="px-4 py-6 text-sm text-[#6B7280]">无数据</div>;
+  return (
+    <div className="grid gap-3 px-4 py-4">
+      <Field label="标题">
+        <TextInput value={action.title} onChange={(v) => props.onChange({ ...action, title: v })} />
+      </Field>
+      <Field label="描述（可选）">
+        <TextArea value={action.description} onChange={(v) => props.onChange({ ...action, description: v })} rows={4} />
+      </Field>
+      <Field label="开始时间">
+        <input
+          className="w-full rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm"
+          type="datetime-local"
+          value={toDateTimeLocalValue(action.startAt)}
+          onChange={(e) =>
+            props.onChange({
+              ...action,
+              startAt: e.target.value ? (fromDateTimeLocalValue(e.target.value) ?? "") : "",
+            })
+          }
+        />
+      </Field>
+      <Field label="结束时间">
+        <input
+          className="w-full rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm"
+          type="datetime-local"
+          value={toDateTimeLocalValue(action.endAt)}
+          onChange={(e) =>
+            props.onChange({
+              ...action,
+              endAt: e.target.value ? (fromDateTimeLocalValue(e.target.value) ?? "") : "",
+            })
+          }
         />
       </Field>
 

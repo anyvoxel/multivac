@@ -75,3 +75,39 @@ func TestServiceConvertFromInboxKeepsIDAndRemovesInbox(t *testing.T) {
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(inboxCount).To(gomega.Equal(0))
 }
+
+func TestServiceCreateScheduledAndListByKind(t *testing.T) {
+	g := gomega.NewWithT(t)
+	db, err := sqlx.Open("sqlite3", ":memory:")
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	defer func() { _ = db.Close() }()
+	ctx := context.Background()
+
+	projectRepo := projectsqlite.NewRepository(db)
+	repo := actionsqlite.NewRepository(db)
+	svc := NewService(repo)
+	g.Expect(projectRepo.Migrate(ctx)).To(gomega.Succeed())
+	g.Expect(svc.Migrate(ctx)).To(gomega.Succeed())
+
+	startAt := time.Date(2026, 2, 1, 9, 0, 0, 0, time.FixedZone("UTC+8", 8*3600))
+	endAt := startAt.Add(90 * time.Minute)
+	action, err := svc.Create(ctx, CreateActionCmd{
+		Title:       "会议",
+		Description: "周会",
+		Kind:        actiondomain.KindScheduled,
+		Attributes: actiondomain.Attributes{
+			Scheduled: &actiondomain.ScheduledAttributes{StartAt: &startAt, EndAt: &endAt},
+		},
+	})
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(action.Kind).To(gomega.Equal(actiondomain.KindScheduled))
+	g.Expect(action.Attributes.Scheduled).ToNot(gomega.BeNil())
+	g.Expect(action.Attributes.Scheduled.StartAt.Location()).To(gomega.Equal(time.UTC))
+	g.Expect(action.Attributes.Scheduled.EndAt.Location()).To(gomega.Equal(time.UTC))
+
+	kind := actiondomain.KindScheduled
+	listed, err := svc.List(ctx, actiondomain.ListQuery{Kind: &kind})
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(listed).To(gomega.HaveLen(1))
+	g.Expect(listed[0].ID).To(gomega.Equal(action.ID))
+}
