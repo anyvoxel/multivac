@@ -102,6 +102,11 @@ type convertActionInboxReq struct {
 	Attributes  *domain.Attributes `json:"attributes"`
 }
 
+type convertActionKindReq struct {
+	Kind       string            `json:"kind"`
+	Attributes domain.Attributes `json:"attributes"`
+}
+
 type actionResp struct {
 	ID          string            `json:"id"`
 	Title       string            `json:"title"`
@@ -282,4 +287,26 @@ func (h *ActionHandler) Delete(c context.Context, ctx *app.RequestContext) {
 		return
 	}
 	ctx.Status(stdhttp.StatusNoContent)
+}
+
+func (h *ActionHandler) ConvertKind(c context.Context, ctx *app.RequestContext) {
+	var req convertActionKindReq
+	if err := ctx.BindJSON(&req); err != nil {
+		ctx.JSON(stdhttp.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	kind, err := parseActionKind(req.Kind)
+	if err != nil {
+		writeActionErr(ctx, err)
+		return
+	}
+	action, err := h.svc.ConvertKind(c, ctx.Param("id"), application.ConvertActionKindCmd{
+		Kind:       kind,
+		Attributes: req.Attributes,
+	})
+	if err != nil {
+		writeActionErr(ctx, err)
+		return
+	}
+	ctx.JSON(stdhttp.StatusOK, toActionResp(action))
 }

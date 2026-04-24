@@ -49,6 +49,11 @@ type ConvertActionFromInboxCmd struct {
 	Attributes  *domain.Attributes
 }
 
+type ConvertActionKindCmd struct {
+	Kind       domain.Kind
+	Attributes domain.Attributes
+}
+
 func (s *ActionService) Migrate(ctx context.Context) error { return s.repo.Migrate(ctx) }
 
 func (s *ActionService) Create(ctx context.Context, cmd CreateActionCmd) (*domain.Action, error) {
@@ -112,3 +117,17 @@ func (s *ActionService) Update(ctx context.Context, id string, cmd UpdateActionC
 }
 
 func (s *ActionService) Delete(ctx context.Context, id string) error { return s.repo.Delete(ctx, id) }
+
+func (s *ActionService) ConvertKind(ctx context.Context, id string, cmd ConvertActionKindCmd) (*domain.Action, error) {
+	action, err := s.repo.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := action.UpdateDetails(action.Title, action.Description, action.ProjectID, cmd.Kind, action.ContextIDs, action.Labels, cmd.Attributes, s.now().UTC()); err != nil {
+		return nil, err
+	}
+	if err := s.repo.Update(ctx, action); err != nil {
+		return nil, err
+	}
+	return action, nil
+}

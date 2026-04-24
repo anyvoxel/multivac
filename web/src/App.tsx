@@ -17,7 +17,7 @@ import {
   UndoRedo,
 } from "@mdxeditor/editor";
 
-import { convertInboxToAction } from "./lib/actions";
+import { convertInboxToAction, convertActionKind, type ActionKind, type ActionAttributes } from "./lib/actions";
 import {
   createProject,
   deleteProject,
@@ -709,6 +709,17 @@ export default function App() {
   const [clarifySaving, setClarifySaving] = useState(false);
   const [clarifyError, setClarifyError] = useState("");
 
+  // Convert action kind dialog state
+  type ConvertActionTargetType = "task" | "waiting" | "scheduled";
+  const [convertAction, setConvertAction] = useState<{ id: string; title: string; currentKind: ActionKind } | null>(null);
+  const [convertActionType, setConvertActionType] = useState<ConvertActionTargetType>("task");
+  const [convertActionOwner, setConvertActionOwner] = useState("");
+  const [convertActionExpectedAt, setConvertActionExpectedAt] = useState<string | undefined>(undefined);
+  const [convertActionStartAt, setConvertActionStartAt] = useState<string | undefined>(undefined);
+  const [convertActionEndAt, setConvertActionEndAt] = useState<string | undefined>(undefined);
+  const [convertActionSaving, setConvertActionSaving] = useState(false);
+  const [convertActionError, setConvertActionError] = useState("");
+
   // Drawer state
   const [drawer, setDrawer] = useState<
     | { type: "none" }
@@ -875,6 +886,58 @@ export default function App() {
       setClarifyError(String(e));
     } finally {
       setClarifySaving(false);
+    }
+  }
+
+  function openConvertActionDialog(action: { id: string; title: string; currentKind: ActionKind }) {
+    setConvertAction(action);
+    setConvertActionType(action.currentKind === "Task" ? "waiting" : "task");
+    setConvertActionOwner("");
+    setConvertActionExpectedAt(undefined);
+    setConvertActionStartAt(undefined);
+    setConvertActionEndAt(undefined);
+    setConvertActionError("");
+  }
+
+  function closeConvertActionDialog() {
+    setConvertAction(null);
+    setConvertActionError("");
+  }
+
+  async function onConfirmConvertAction() {
+    if (!convertAction) return;
+    setConvertActionSaving(true);
+    setConvertActionError("");
+    try {
+      const targetKind: ActionKind = convertActionType === "task" ? "Task" : convertActionType === "waiting" ? "Waiting" : "Scheduled";
+      if (targetKind === convertAction.currentKind) {
+        setConvertActionError("不能转换为相同类型");
+        setConvertActionSaving(false);
+        return;
+      }
+      let attributes: ActionAttributes = {};
+      if (targetKind === "Task") {
+        attributes = { task: { status: "Pending" as const } };
+      } else if (targetKind === "Waiting") {
+        if (!convertActionOwner.trim()) {
+          setConvertActionError("请输入负责人");
+          setConvertActionSaving(false);
+          return;
+        }
+        attributes = { waiting: { delegatee: convertActionOwner, dueAt: convertActionExpectedAt } };
+      } else if (targetKind === "Scheduled") {
+        attributes = { scheduled: { startAt: convertActionStartAt, endAt: convertActionEndAt } };
+      }
+      await convertActionKind(convertAction.id, { kind: targetKind, attributes });
+      // Refresh relevant lists
+      await Promise.all([refreshWaitingLists(), refreshSchedule()]);
+      setTaskListVersion((v) => v + 1);
+      closeConvertActionDialog();
+      closeDrawer();
+    } catch (e) {
+      setConvertActionError(String(e));
+    } finally {
+      setConvertActionSaving(false);
     }
   }
 
@@ -2049,6 +2112,108 @@ export default function App() {
           </CenteredDialog>
         ) : null}
 
+        {convertAction ? (
+          <CenteredDialog
+            title="转换类型"
+            onClose={closeConvertActionDialog}
+            action={
+              <button
+                className={classNames(
+                  "rounded-md px-3 py-1.5 text-sm font-medium",
+                  convertActionSaving
+                    ? "cursor-not-allowed bg-[#E5E7EB] text-[#9CA3AF]"
+                    : "bg-[#4F46E5] text-white hover:opacity-90",
+                )}
+                type="button"
+                disabled={convertActionSaving}
+                onClick={() => void onConfirmConvertAction()}
+              >
+                确认
+              </button>
+            }
+          >
+            <div className="grid gap-3 px-6 py-4">
+              {convertActionError ? (
+                <div className="rounded-md border border-[#FCA5A5] bg-[#FEF2F2] px-3 py-2 text-sm text-[#B91C1C]">
+                  {convertActionError}
+                </div>
+              ) : null}
+              <div className="text-sm text-[#6B7280]">
+                将 "{convertAction.title}" 转换为：
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {[
+                  { type: "task" as const, label: "下一步", disabled: convertAction.currentKind === "Task" },
+                  { type: "waiting" as const, label: "等待中", disabled: convertAction.currentKind === "Waiting" },
+                  { type: "scheduled" as const, label: "日程", disabled: convertAction.currentKind === "Scheduled" },
+                ].map((item, index) => (
+                  <button
+                    key={item.type}
+                    type="button"
+                    className={classNames(
+                      "rounded-md border px-3 py-1.5 text-sm font-medium",
+                      item.disabled
+                        ? "cursor-not-allowed border-[#E6E8F0] bg-[#F5F6FA] text-[#9CA3AF]"
+                        : convertActionType === item.type
+                          ? "border-[#4F46E5] bg-[#EEF2FF] text-[#4F46E5]"
+                          : "border-[#E6E8F0] bg-white text-[#374151] hover:bg-[#F5F6FA]",
+                    )}
+                    disabled={item.disabled}
+                    autoFocus={!item.disabled && index === (convertAction.currentKind === "Task" ? 1 : 0)}
+                    onClick={() => setConvertActionType(item.type)}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+              {convertActionType === "waiting" ? (
+                <>
+                  <Field label="负责人">
+                    <TextInput
+                      value={convertActionOwner}
+                      onChange={setConvertActionOwner}
+                      placeholder="请输入负责人"
+                    />
+                  </Field>
+                  <Field label="预期完成时间（可选）">
+                    <input
+                      className="w-full rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm"
+                      type="datetime-local"
+                      value={toDateTimeLocalValue(convertActionExpectedAt)}
+                      onChange={(e) =>
+                        setConvertActionExpectedAt(e.target.value ? fromDateTimeLocalValue(e.target.value) : undefined)
+                      }
+                    />
+                  </Field>
+                </>
+              ) : convertActionType === "scheduled" ? (
+                <>
+                  <Field label="开始时间">
+                    <input
+                      className="w-full rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm"
+                      type="datetime-local"
+                      value={toDateTimeLocalValue(convertActionStartAt)}
+                      onChange={(e) =>
+                        setConvertActionStartAt(e.target.value ? fromDateTimeLocalValue(e.target.value) : undefined)
+                      }
+                    />
+                  </Field>
+                  <Field label="结束时间">
+                    <input
+                      className="w-full rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm"
+                      type="datetime-local"
+                      value={toDateTimeLocalValue(convertActionEndAt)}
+                      onChange={(e) =>
+                        setConvertActionEndAt(e.target.value ? fromDateTimeLocalValue(e.target.value) : undefined)
+                      }
+                    />
+                  </Field>
+                </>
+              ) : null}
+            </div>
+          </CenteredDialog>
+        ) : null}
+
         {drawer.type === "project" || drawer.type === "inbox" || drawer.type === "context" || drawer.type === "reference" ? (
           <CenteredDialog
             title={
@@ -2178,6 +2343,9 @@ export default function App() {
                   setDrawer({ type: "none" });
                   setDrawerTask(null);
                 }}
+                onConvert={drawer.mode === "edit" && drawerTask ? () => {
+                  openConvertActionDialog({ id: drawerTask.id, title: drawerTask.name, currentKind: "Task" });
+                } : undefined}
               />
             ) : drawer.type === "someday" ? (
               <SomedayDrawerForm
@@ -2206,6 +2374,9 @@ export default function App() {
                   setDrawer({ type: "none" });
                   setDrawerWaitingList(null);
                 }}
+                onConvert={drawer.mode === "edit" && drawerWaitingList ? () => {
+                  openConvertActionDialog({ id: drawerWaitingList.id, title: drawerWaitingList.name, currentKind: "Waiting" });
+                } : undefined}
               />
             ) : (
               <ScheduledDrawerForm
@@ -2220,6 +2391,9 @@ export default function App() {
                   setDrawer({ type: "none" });
                   setDrawerScheduledAction(null);
                 }}
+                onConvert={drawer.mode === "edit" && drawerScheduledAction ? () => {
+                  openConvertActionDialog({ id: drawerScheduledAction.id, title: drawerScheduledAction.title, currentKind: "Scheduled" });
+                } : undefined}
               />
             )}
           </Drawer>
@@ -4312,7 +4486,7 @@ function CenteredDialog(props: {
   children: ReactNode;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4 py-8">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 px-4 py-8">
       <div className="absolute inset-0" onClick={props.onClose} />
       <div className="project-create-dialog relative flex max-h-full w-full max-w-5xl flex-col rounded-2xl border border-[#E6E8F0] bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-[#E6E8F0] px-6 py-4">
@@ -5218,6 +5392,7 @@ function WaitingListDrawerForm(props: {
   mode: "create" | "edit";
   onChange: (waitingList: WaitingList | null) => void;
   onDelete: () => Promise<void>;
+  onConvert?: () => void;
 }) {
   const waitingList = props.waitingList;
   if (!waitingList) return <div className="px-4 py-6 text-sm text-[#6B7280]">无数据</div>;
@@ -5246,7 +5421,16 @@ function WaitingListDrawerForm(props: {
       </Field>
 
       {props.mode === "edit" ? (
-        <div className="pt-2">
+        <div className="flex gap-2 pt-2">
+          {props.onConvert ? (
+            <button
+              className="rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm text-[#4F46E5] hover:bg-[#F5F6FA]"
+              type="button"
+              onClick={props.onConvert}
+            >
+              转换为
+            </button>
+          ) : null}
           <button
             className="rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm text-[#DC2626] hover:bg-[#F5F6FA]"
             type="button"
@@ -5265,6 +5449,7 @@ function ScheduledDrawerForm(props: {
   mode: "edit";
   onChange: (action: ScheduledAction | null) => void;
   onDelete: () => Promise<void>;
+  onConvert?: () => void;
 }) {
   const action = props.action;
   if (!action) return <div className="px-4 py-6 text-sm text-[#6B7280]">无数据</div>;
@@ -5304,7 +5489,16 @@ function ScheduledDrawerForm(props: {
       </Field>
 
       {props.mode === "edit" ? (
-        <div className="pt-2">
+        <div className="flex gap-2 pt-2">
+          {props.onConvert ? (
+            <button
+              className="rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm text-[#4F46E5] hover:bg-[#F5F6FA]"
+              type="button"
+              onClick={props.onConvert}
+            >
+              转换为
+            </button>
+          ) : null}
           <button
             className="rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm text-[#DC2626] hover:bg-[#F5F6FA]"
             type="button"
@@ -5324,6 +5518,7 @@ function TaskDrawerForm(props: {
   projects: Project[];
   onChange: (t: Task | null) => void;
   onDelete: () => Promise<void>;
+  onConvert?: () => void;
 }) {
   const t = props.task;
   if (!t) return <div className="px-4 py-6 text-sm text-[#6B7280]">无数据</div>;
@@ -5367,7 +5562,16 @@ function TaskDrawerForm(props: {
       </Field>
 
       {props.mode === "edit" ? (
-        <div className="pt-2">
+        <div className="flex gap-2 pt-2">
+          {props.onConvert ? (
+            <button
+              className="rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm text-[#4F46E5] hover:bg-[#F5F6FA]"
+              type="button"
+              onClick={props.onConvert}
+            >
+              转换为
+            </button>
+          ) : null}
           <button
             className="rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm text-[#DC2626] hover:bg-[#F5F6FA]"
             type="button"

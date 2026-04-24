@@ -182,3 +182,15 @@ export async function convertInboxToAction(id: string, input?: ConvertInboxToAct
     ...(body ? { body } : {}),
   });
 }
+
+export type ConvertActionKindInput = {
+  kind: ActionKind;
+  attributes: ActionAttributes;
+};
+
+export async function convertActionKind(id: string, input: ConvertActionKindInput): Promise<Action> {
+  return request<Action>(`/api/v1/actions/${encodeURIComponent(id)}/convert`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}

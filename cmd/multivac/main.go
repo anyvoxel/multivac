@@ -108,6 +108,7 @@ func run(addr, dbPath string) error {
 	api.GET("/actions", actionHandler.List)
 	api.GET("/actions/:id", actionHandler.Get)
 	api.PUT("/actions/:id", actionHandler.Update)
+	api.POST("/actions/:id/convert", actionHandler.ConvertKind)
 	api.DELETE("/actions/:id", actionHandler.Delete)
 
 	api.POST("/contexts", contextHandler.Create)
