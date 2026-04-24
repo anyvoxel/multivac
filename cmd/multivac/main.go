@@ -174,10 +174,6 @@ func setupServices(dbPath string) (*sqlx.DB, *projecthttp.ProjectHandler, *inbox
 		_ = db.Close()
 		return nil, nil, nil, nil, nil, nil, nil, err
 	}
-	if _, err := db.Exec("PRAGMA foreign_keys = ON;"); err != nil {
-		_ = db.Close()
-		return nil, nil, nil, nil, nil, nil, nil, err
-	}
 
 	projRepo := projectsqlite.NewProjectRepository(db)
 	projSvc := projectapp.NewProjectService(projRepo)

@@ -19,8 +19,6 @@ func NewReferenceRepository(db *sqlx.DB) *ReferenceRepository { return &Referenc
 
 func (r *ReferenceRepository) Migrate(ctx context.Context) error {
 	const ddl = `
-		PRAGMA foreign_keys = ON;
-
 		CREATE TABLE IF NOT EXISTS "references" (
 		  id TEXT PRIMARY KEY,
 		  title TEXT NOT NULL,

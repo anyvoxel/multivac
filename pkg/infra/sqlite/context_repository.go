@@ -18,8 +18,6 @@ func NewContextRepository(db *sqlx.DB) *ContextRepository { return &ContextRepos
 
 func (r *ContextRepository) Migrate(ctx context.Context) error {
 	const ddl = `
-		PRAGMA foreign_keys = ON;
-
 		CREATE TABLE IF NOT EXISTS contexts (
 		  id TEXT PRIMARY KEY,
 		  title TEXT NOT NULL,

@@ -156,3 +156,29 @@ export async function updateAction(id: string, input: UpdateActionInput): Promis
 export async function deleteAction(id: string): Promise<void> {
   await request<void>(`/api/v1/actions/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
+
+export type ConvertInboxToActionInput = {
+  title?: string;
+  description?: string;
+  projectId?: string;
+  kind?: ActionKind;
+  context?: string[];
+  labels?: ActionLabel[];
+  attributes?: ActionAttributes;
+};
+
+export async function convertInboxToAction(id: string, input?: ConvertInboxToActionInput): Promise<Action> {
+  const body = input ? JSON.stringify({
+    ...(input.title !== undefined ? { title: input.title } : {}),
+    ...(input.description !== undefined ? { description: input.description } : {}),
+    ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
+    ...(input.kind !== undefined ? { kind: input.kind } : {}),
+    ...(input.context !== undefined ? { context: input.context } : {}),
+    ...(input.labels !== undefined ? { labels: input.labels } : {}),
+    ...(input.attributes !== undefined ? { attributes: input.attributes } : {}),
+  }) : undefined;
+  return request<Action>(`/api/v1/inboxes/${encodeURIComponent(id)}/convert-to-action`, {
+    method: "POST",
+    ...(body ? { body } : {}),
+  });
+}

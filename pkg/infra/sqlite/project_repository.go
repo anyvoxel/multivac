@@ -74,8 +74,6 @@ func NewProjectRepository(db *sqlx.DB) *ProjectRepository {
 // Migrate creates required tables and indices.
 func (r *ProjectRepository) Migrate(ctx context.Context) error {
 	const ddl = `
-		PRAGMA foreign_keys = ON;
-
 		CREATE TABLE IF NOT EXISTS projects (
 		  id TEXT PRIMARY KEY,
 		  title TEXT NOT NULL,

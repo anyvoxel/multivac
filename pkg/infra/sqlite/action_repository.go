@@ -20,13 +20,11 @@ func NewActionRepository(db *sqlx.DB) *ActionRepository { return &ActionReposito
 
 func (r *ActionRepository) Migrate(ctx context.Context) error {
 	const ddl = `
-		PRAGMA foreign_keys = ON;
-
 		CREATE TABLE IF NOT EXISTS actions (
 		  id TEXT PRIMARY KEY,
 		  title TEXT NOT NULL,
 		  description TEXT NOT NULL,
-		  project_id TEXT NULL REFERENCES projects(id) ON DELETE SET NULL,
+		  project_id TEXT NULL,
 		  kind TEXT NOT NULL,
 		  "context" JSONB NOT NULL DEFAULT (jsonb('[]')),
 		  labels JSONB NOT NULL DEFAULT (jsonb('[]')),

@@ -17,6 +17,7 @@ import {
   UndoRedo,
 } from "@mdxeditor/editor";
 
+import { convertInboxToAction } from "./lib/actions";
 import {
   createProject,
   deleteProject,
@@ -694,6 +695,20 @@ export default function App() {
   const [createScheduledSaving, setCreateScheduledSaving] = useState(false);
   const [createScheduledError, setCreateScheduledError] = useState("");
 
+  // Clarify inbox dialog state
+  type ClarifyTargetType = "task" | "project" | "reference" | "someday" | "waiting" | "scheduled";
+  const [clarifyInbox, setClarifyInbox] = useState<Inbox | null>(null);
+  const [clarifyType, setClarifyType] = useState<ClarifyTargetType>("task");
+  const [clarifyTitle, setClarifyTitle] = useState("");
+  const [clarifyDescription, setClarifyDescription] = useState("");
+  const [clarifyProjectId, setClarifyProjectId] = useState<string>("");
+  const [clarifyOwner, setClarifyOwner] = useState("");
+  const [clarifyExpectedAt, setClarifyExpectedAt] = useState<string | undefined>(undefined);
+  const [clarifyStartAt, setClarifyStartAt] = useState<string | undefined>(undefined);
+  const [clarifyEndAt, setClarifyEndAt] = useState<string | undefined>(undefined);
+  const [clarifySaving, setClarifySaving] = useState(false);
+  const [clarifyError, setClarifyError] = useState("");
+
   // Drawer state
   const [drawer, setDrawer] = useState<
     | { type: "none" }
@@ -766,6 +781,101 @@ export default function App() {
   function openCreateScheduledDialog(day: Date) {
     setCreateScheduledError("");
     setCreateScheduledDraft(createScheduledDraftAtDay(day));
+  }
+
+  function openClarifyDialog(inbox: Inbox) {
+    setClarifyInbox(inbox);
+    setClarifyType("task");
+    setClarifyTitle(inbox.name);
+    setClarifyDescription(inbox.description);
+    setClarifyProjectId("");
+    setClarifyOwner("");
+    setClarifyExpectedAt(undefined);
+    setClarifyStartAt(undefined);
+    setClarifyEndAt(undefined);
+    setClarifyError("");
+  }
+
+  function closeClarifyDialog() {
+    setClarifyInbox(null);
+    setClarifyError("");
+  }
+
+  async function onConfirmClarify() {
+    if (!clarifyInbox) return;
+    setClarifySaving(true);
+    setClarifyError("");
+    try {
+      if (clarifyType === "task") {
+        await convertInboxToAction(clarifyInbox.id, {
+          title: clarifyTitle || undefined,
+          description: clarifyDescription || undefined,
+          projectId: clarifyProjectId || undefined,
+          kind: "Task",
+        });
+        await Promise.all([refreshInboxes()]);
+        setTaskListVersion((v) => v + 1);
+      } else if (clarifyType === "project") {
+        await createProject({
+          title: clarifyTitle || clarifyInbox.name,
+          description: clarifyDescription || clarifyInbox.description,
+          goals: [],
+          references: [],
+        });
+        await deleteInbox(clarifyInbox.id);
+        await Promise.all([refreshInboxes(), refreshProjects()]);
+      } else if (clarifyType === "reference") {
+        await createReference({
+          title: clarifyTitle || clarifyInbox.name,
+          description: clarifyDescription || clarifyInbox.description,
+          references: [],
+        });
+        await deleteInbox(clarifyInbox.id);
+        await Promise.all([refreshInboxes(), refreshReferences()]);
+      } else if (clarifyType === "someday") {
+        await convertInboxToSomeday(clarifyInbox.id, {
+          name: clarifyTitle || undefined,
+          description: clarifyDescription || undefined,
+        });
+        await Promise.all([refreshInboxes(), refreshSomedays()]);
+      } else if (clarifyType === "waiting") {
+        if (!clarifyOwner.trim()) {
+          setClarifyError("请输入负责人");
+          setClarifySaving(false);
+          return;
+        }
+        await convertInboxToAction(clarifyInbox.id, {
+          title: clarifyTitle || undefined,
+          description: clarifyDescription || undefined,
+          kind: "Waiting",
+          attributes: {
+            waiting: {
+              delegatee: clarifyOwner,
+              dueAt: clarifyExpectedAt,
+            },
+          },
+        });
+        await Promise.all([refreshInboxes(), refreshWaitingLists()]);
+      } else if (clarifyType === "scheduled") {
+        await convertInboxToAction(clarifyInbox.id, {
+          title: clarifyTitle || undefined,
+          description: clarifyDescription || undefined,
+          kind: "Scheduled",
+          attributes: {
+            scheduled: {
+              startAt: clarifyStartAt,
+              endAt: clarifyEndAt,
+            },
+          },
+        });
+        await Promise.all([refreshInboxes(), refreshSchedule()]);
+      }
+      closeClarifyDialog();
+    } catch (e) {
+      setClarifyError(String(e));
+    } finally {
+      setClarifySaving(false);
+    }
   }
 
   useEffect(() => {
@@ -1326,26 +1436,6 @@ export default function App() {
     }
   }
 
-  async function onClarifyInboxToSomeday(inbox: Inbox) {
-    if (!confirm(`确定将收集箱事项澄清为将来/也许: ${inbox.name} ?`)) return;
-    setInboxLoading(true);
-    setInboxError("");
-    setSomedayError("");
-    try {
-      await convertInboxToSomeday(inbox.id);
-      if (drawer.type === "inbox" && drawer.mode === "edit" && drawer.id === inbox.id) {
-        closeDrawer();
-      }
-      await Promise.all([refreshInboxes(), refreshSomedays()]);
-    } catch (e) {
-      const message = String(e);
-      setInboxError(message);
-      setSomedayError(message);
-    } finally {
-      setInboxLoading(false);
-    }
-  }
-
   async function onDeleteContextItem(contextItem: ManagedContext) {
     if (!confirm(`确定删除情境: ${contextItem.title} ?`)) return;
     setContextLoading(true);
@@ -1685,7 +1775,7 @@ export default function App() {
                 onRefresh={() => void refreshInboxes()}
                 onOpen={(id, inbox) => void openInboxDrawer("edit", id, inbox)}
                 onDelete={(inbox) => void onDeleteInbox(inbox)}
-                onClarify={(inbox) => void onClarifyInboxToSomeday(inbox)}
+                onClarify={(inbox) => openClarifyDialog(inbox)}
               />
             ) : route === "contexts" ? (
               <ContextsPage
@@ -1827,6 +1917,134 @@ export default function App() {
                   }
                 />
               </Field>
+            </div>
+          </CenteredDialog>
+        ) : null}
+
+        {clarifyInbox ? (
+          <CenteredDialog
+            title="澄清收集箱"
+            onClose={closeClarifyDialog}
+            action={
+              <button
+                className={classNames(
+                  "rounded-md px-3 py-1.5 text-sm font-medium",
+                  clarifySaving
+                    ? "cursor-not-allowed bg-[#E5E7EB] text-[#9CA3AF]"
+                    : "bg-[#4F46E5] text-white hover:opacity-90",
+                )}
+                type="button"
+                disabled={clarifySaving}
+                onClick={() => void onConfirmClarify()}
+              >
+                确认
+              </button>
+            }
+          >
+            <div className="grid gap-3 px-6 py-4">
+              {clarifyError ? (
+                <div className="rounded-md border border-[#FCA5A5] bg-[#FEF2F2] px-3 py-2 text-sm text-[#B91C1C]">
+                  {clarifyError}
+                </div>
+              ) : null}
+              <Field label="澄清为">
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { type: "task" as const, label: "下一步" },
+                    { type: "project" as const, label: "项目" },
+                    { type: "reference" as const, label: "资料" },
+                    { type: "someday" as const, label: "将来/也许" },
+                    { type: "waiting" as const, label: "等待中" },
+                    { type: "scheduled" as const, label: "日程" },
+                  ].map((item) => (
+                    <button
+                      key={item.type}
+                      type="button"
+                      className={classNames(
+                        "rounded-md border px-3 py-1.5 text-sm font-medium",
+                        clarifyType === item.type
+                          ? "border-[#4F46E5] bg-[#EEF2FF] text-[#4F46E5]"
+                          : "border-[#E6E8F0] bg-white text-[#374151] hover:bg-[#F5F6FA]",
+                      )}
+                      onClick={() => setClarifyType(item.type)}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </Field>
+              <Field label="标题">
+                <TextInput
+                  value={clarifyTitle}
+                  onChange={setClarifyTitle}
+                />
+              </Field>
+              <Field label="描述（可选）">
+                <MarkdownEditor
+                  value={clarifyDescription}
+                  onChange={setClarifyDescription}
+                  placeholder="输入描述，支持 Markdown 格式"
+                />
+              </Field>
+              {clarifyType === "task" ? (
+                <Field label="所属项目（可选）">
+                  <select
+                    className="w-full rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm"
+                    value={clarifyProjectId}
+                    onChange={(e) => setClarifyProjectId(e.target.value)}
+                  >
+                    <option value="">无</option>
+                    {allProjects.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.title}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              ) : clarifyType === "waiting" ? (
+                <>
+                  <Field label="负责人">
+                    <TextInput
+                      value={clarifyOwner}
+                      onChange={setClarifyOwner}
+                      placeholder="请输入负责人"
+                    />
+                  </Field>
+                  <Field label="预期完成时间（可选）">
+                    <input
+                      className="w-full rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm"
+                      type="datetime-local"
+                      value={toDateTimeLocalValue(clarifyExpectedAt)}
+                      onChange={(e) =>
+                        setClarifyExpectedAt(e.target.value ? fromDateTimeLocalValue(e.target.value) : undefined)
+                      }
+                    />
+                  </Field>
+                </>
+              ) : clarifyType === "scheduled" ? (
+                <>
+                  <Field label="开始时间（可选）">
+                    <input
+                      className="w-full rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm"
+                      type="datetime-local"
+                      value={toDateTimeLocalValue(clarifyStartAt)}
+                      onChange={(e) =>
+                        setClarifyStartAt(e.target.value ? fromDateTimeLocalValue(e.target.value) : undefined)
+                      }
+                    />
+                  </Field>
+                  <Field label="结束时间（可选）">
+                    <input
+                      className="w-full rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm"
+                      type="datetime-local"
+                      value={toDateTimeLocalValue(clarifyEndAt)}
+                      onChange={(e) =>
+                        setClarifyEndAt(e.target.value ? fromDateTimeLocalValue(e.target.value) : undefined)
+                      }
+                    />
+                  </Field>
+                </>
+              ) : null}
             </div>
           </CenteredDialog>
         ) : null}
@@ -2442,7 +2660,7 @@ const MIN_REFERENCE_COLUMN_WIDTHS: ReferenceColumnWidths = {
   actions: 120,
 };
 
-type SomedayColumnKey = "name" | "description" | "updatedAt" | "actions";
+type SomedayColumnKey = "name" | "updatedAt" | "actions";
 
 type SomedayColumnWidths = Record<SomedayColumnKey, number>;
 
@@ -2453,8 +2671,7 @@ type SomedayResizeState = {
 } | null;
 
 const DEFAULT_SOMEDAY_COLUMN_WIDTHS: SomedayColumnWidths = {
-  name: 260,
-  description: 360,
+  name: 400,
   updatedAt: 180,
   actions: 120,
 };
@@ -2462,13 +2679,12 @@ const DEFAULT_SOMEDAY_COLUMN_WIDTHS: SomedayColumnWidths = {
 const SOMEDAY_COLUMN_WIDTHS_STORAGE_KEY = "multivac:someday-column-widths";
 
 const MIN_SOMEDAY_COLUMN_WIDTHS: SomedayColumnWidths = {
-  name: 180,
-  description: 220,
+  name: 200,
   updatedAt: 140,
   actions: 100,
 };
 
-type WaitingListColumnKey = "name" | "details" | "owner" | "expectedAt" | "updatedAt" | "actions";
+type WaitingListColumnKey = "name" | "owner" | "expectedAt" | "updatedAt" | "actions";
 
 type WaitingListColumnWidths = Record<WaitingListColumnKey, number>;
 
@@ -2479,8 +2695,7 @@ type WaitingListResizeState = {
 } | null;
 
 const DEFAULT_WAITING_LIST_COLUMN_WIDTHS: WaitingListColumnWidths = {
-  name: 220,
-  details: 320,
+  name: 280,
   owner: 160,
   expectedAt: 200,
   updatedAt: 180,
@@ -2490,8 +2705,7 @@ const DEFAULT_WAITING_LIST_COLUMN_WIDTHS: WaitingListColumnWidths = {
 const WAITING_LIST_COLUMN_WIDTHS_STORAGE_KEY = "multivac:waiting-list-column-widths";
 
 const MIN_WAITING_LIST_COLUMN_WIDTHS: WaitingListColumnWidths = {
-  name: 180,
-  details: 220,
+  name: 200,
   owner: 120,
   expectedAt: 180,
   updatedAt: 140,
@@ -2608,7 +2822,6 @@ function normalizeSomedayColumnWidths(value: unknown): SomedayColumnWidths {
   const widths = typeof value === "object" && value !== null ? value as Partial<Record<SomedayColumnKey, unknown>> : {};
   return {
     name: typeof widths.name === "number" ? Math.max(MIN_SOMEDAY_COLUMN_WIDTHS.name, widths.name) : DEFAULT_SOMEDAY_COLUMN_WIDTHS.name,
-    description: typeof widths.description === "number" ? Math.max(MIN_SOMEDAY_COLUMN_WIDTHS.description, widths.description) : DEFAULT_SOMEDAY_COLUMN_WIDTHS.description,
     updatedAt: typeof widths.updatedAt === "number" ? Math.max(MIN_SOMEDAY_COLUMN_WIDTHS.updatedAt, widths.updatedAt) : DEFAULT_SOMEDAY_COLUMN_WIDTHS.updatedAt,
     actions: typeof widths.actions === "number" ? Math.max(MIN_SOMEDAY_COLUMN_WIDTHS.actions, widths.actions) : DEFAULT_SOMEDAY_COLUMN_WIDTHS.actions,
   };
@@ -2629,7 +2842,6 @@ function normalizeWaitingListColumnWidths(value: unknown): WaitingListColumnWidt
   const widths = typeof value === "object" && value !== null ? value as Partial<Record<WaitingListColumnKey, unknown>> : {};
   return {
     name: typeof widths.name === "number" ? Math.max(MIN_WAITING_LIST_COLUMN_WIDTHS.name, widths.name) : DEFAULT_WAITING_LIST_COLUMN_WIDTHS.name,
-    details: typeof widths.details === "number" ? Math.max(MIN_WAITING_LIST_COLUMN_WIDTHS.details, widths.details) : DEFAULT_WAITING_LIST_COLUMN_WIDTHS.details,
     owner: typeof widths.owner === "number" ? Math.max(MIN_WAITING_LIST_COLUMN_WIDTHS.owner, widths.owner) : DEFAULT_WAITING_LIST_COLUMN_WIDTHS.owner,
     expectedAt: typeof widths.expectedAt === "number" ? Math.max(MIN_WAITING_LIST_COLUMN_WIDTHS.expectedAt, widths.expectedAt) : DEFAULT_WAITING_LIST_COLUMN_WIDTHS.expectedAt,
     updatedAt: typeof widths.updatedAt === "number" ? Math.max(MIN_WAITING_LIST_COLUMN_WIDTHS.updatedAt, widths.updatedAt) : DEFAULT_WAITING_LIST_COLUMN_WIDTHS.updatedAt,
@@ -3324,7 +3536,6 @@ function ReferencesPage(props: {
               <tr key={reference.id} className="border-t border-[#E6E8F0] hover:bg-[#F9FAFB]">
                 <td className="px-4 py-3">
                   <div className="font-medium text-[#111827]">{reference.title}</div>
-                  <div className="mt-1 line-clamp-2 text-sm text-[#6B7280]">{reference.description || "-"}</div>
                 </td>
                 <td className="px-4 py-3 text-[#6B7280]">{reference.references.length}</td>
                 <td className="px-4 py-3 text-[#6B7280]">{formatDate(reference.updatedAt)}</td>
@@ -3477,14 +3688,12 @@ function SomedaysPage(props: {
         <table className="w-full min-w-[920px] table-fixed text-left text-sm">
           <colgroup>
             <col style={{ width: columnWidths.name }} />
-            <col style={{ width: columnWidths.description }} />
             <col style={{ width: columnWidths.updatedAt }} />
             <col style={{ width: columnWidths.actions }} />
           </colgroup>
           <thead className="bg-[#F9FAFB] text-xs text-[#6B7280]">
             <tr>
               {headerCell("任务名称", "name")}
-              {headerCell("描述", "description")}
               {headerCell("更新时间", "updatedAt")}
               {headerCell("操作", "actions", true)}
             </tr>
@@ -3492,7 +3701,7 @@ function SomedaysPage(props: {
           <tbody>
             {props.items.length === 0 && !props.loading ? (
               <tr>
-                <td colSpan={4} className="px-4 py-10 text-center text-[#6B7280]">
+                <td colSpan={3} className="px-4 py-10 text-center text-[#6B7280]">
                   暂无将来/也许
                 </td>
               </tr>
@@ -3501,9 +3710,6 @@ function SomedaysPage(props: {
               <tr key={someday.id} className="border-t border-[#E6E8F0] hover:bg-[#F9FAFB]">
                 <td className="px-4 py-3">
                   <div className="font-medium text-[#111827]">{someday.name}</div>
-                </td>
-                <td className="px-4 py-3 text-[#6B7280]">
-                  <div className="line-clamp-2 break-words">{someday.description || "-"}</div>
                 </td>
                 <td className="px-4 py-3 text-[#6B7280]">{formatDate(someday.updatedAt)}</td>
                 <td className="px-4 py-3 text-right">
@@ -4880,10 +5086,9 @@ function WaitingListsPage(props: {
       </div>
 
       <div className="overflow-x-auto overflow-y-hidden rounded-lg border border-[#E6E8F0] bg-white">
-        <table className="w-full min-w-[1220px] table-fixed text-left text-sm">
+        <table className="w-full min-w-[1020px] table-fixed text-left text-sm">
           <colgroup>
             <col style={{ width: columnWidths.name }} />
-            <col style={{ width: columnWidths.details }} />
             <col style={{ width: columnWidths.owner }} />
             <col style={{ width: columnWidths.expectedAt }} />
             <col style={{ width: columnWidths.updatedAt }} />
@@ -4892,7 +5097,6 @@ function WaitingListsPage(props: {
           <thead className="bg-[#F9FAFB] text-xs text-[#6B7280]">
             <tr>
               {headerCell("名称", "name")}
-              {headerCell("详细信息", "details")}
               {headerCell("负责人", "owner")}
               {headerCell("预期完成时间", "expectedAt")}
               {headerCell("更新时间", "updatedAt")}
@@ -4902,7 +5106,7 @@ function WaitingListsPage(props: {
           <tbody>
             {props.items.length === 0 && !props.loading ? (
               <tr>
-                <td colSpan={6} className="px-4 py-10 text-center text-[#6B7280]">
+                <td colSpan={5} className="px-4 py-10 text-center text-[#6B7280]">
                   暂无等待列表
                 </td>
               </tr>
@@ -4911,9 +5115,6 @@ function WaitingListsPage(props: {
               <tr key={waitingList.id} className="border-t border-[#E6E8F0] hover:bg-[#F9FAFB]">
                 <td className="px-4 py-3">
                   <div className="font-medium text-[#111827]">{waitingList.name}</div>
-                </td>
-                <td className="px-4 py-3 text-[#6B7280]">
-                  <div className="line-clamp-2 break-words">{waitingList.details || "-"}</div>
                 </td>
                 <td className="px-4 py-3 text-[#6B7280]">
                   <div className="truncate">{waitingList.owner || "-"}</div>
@@ -5150,11 +5351,11 @@ function TaskDrawerForm(props: {
       </Field>
 
       <Field label="任务描述（可选）">
-        <TextArea
+        <MarkdownEditor
           value={t.description}
           onChange={(v) => props.onChange({ ...t, description: v })}
-          rows={3}
-          placeholder="可选"
+          placeholder="输入任务描述，支持 Markdown 格式"
+          contentClassName="project-md-editor__content--tall"
         />
       </Field>
       <Field label="标签（@=情境，#=标签，无前缀不可筛选）">

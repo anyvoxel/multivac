@@ -18,8 +18,6 @@ func NewInboxRepository(db *sqlx.DB) *InboxRepository { return &InboxRepository{
 
 func (r *InboxRepository) Migrate(ctx context.Context) error {
 	const ddl = `
-		PRAGMA foreign_keys = ON;
-
 		CREATE TABLE IF NOT EXISTS inboxes (
 		  id TEXT PRIMARY KEY,
 		  title TEXT NOT NULL,

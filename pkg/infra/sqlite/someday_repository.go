@@ -19,8 +19,6 @@ func NewSomedayRepository(db *sqlx.DB) *SomedayRepository { return &SomedayRepos
 
 func (r *SomedayRepository) Migrate(ctx context.Context) error {
 	const ddl = `
-		PRAGMA foreign_keys = ON;
-
 		CREATE TABLE IF NOT EXISTS somedays (
 		  id TEXT PRIMARY KEY,
 		  title TEXT NOT NULL,
