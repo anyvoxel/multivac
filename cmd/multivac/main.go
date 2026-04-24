@@ -131,6 +131,8 @@ func run(addr, dbPath string) error {
 
 	api.POST("/inboxes/:id/convert-to-action", actionHandler.ConvertFromInbox)
 	api.POST("/inboxes/:id/convert-to-someday", somedayHandler.ConvertFromInbox)
+	api.POST("/actions/:id/convert-to-someday", somedayHandler.ConvertFromAction)
+	api.POST("/somedays/:id/convert-to-inbox", inboxHandler.ConvertFromSomeday)
 
 	// Web UI (embedded). It serves SPA under /.
 	h.GET("/*filepath", func(_ context.Context, ctx *app.RequestContext) {

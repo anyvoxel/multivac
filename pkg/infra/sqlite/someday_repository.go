@@ -248,3 +248,67 @@ func (r *SomedayRepository) ConvertFromInbox(ctx context.Context, inboxID string
 	}
 	return someday, nil
 }
+
+type somedayActionRow struct {
+	ID          string `db:"id"`
+	Title       string `db:"title"`
+	Description string `db:"description"`
+}
+
+func (r *SomedayRepository) ConvertFromAction(ctx context.Context, actionID string, title, description *string, now time.Time) (*domain.Someday, error) {
+	tx, err := r.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var action somedayActionRow
+	if err := tx.GetContext(ctx, &action, `SELECT id, title, description FROM actions WHERE id = ?;`, actionID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, err
+	}
+
+	finalTitle := action.Title
+	if title != nil {
+		finalTitle = *title
+	}
+	finalDescription := action.Description
+	if description != nil {
+		finalDescription = *description
+	}
+
+	someday, err := domain.NewSomeday(action.ID, finalTitle, finalDescription, now.UTC())
+	if err != nil {
+		return nil, err
+	}
+
+	const insertSomeday = `INSERT INTO somedays (id, title, description, created_at, updated_at) VALUES (:id, :title, :description, :created_at, :updated_at);`
+	if _, err := tx.NamedExecContext(ctx, insertSomeday, map[string]any{
+		"id":          someday.ID,
+		"title":       someday.Title,
+		"description": someday.Description,
+		"created_at":  someday.CreatedAt,
+		"updated_at":  someday.UpdatedAt,
+	}); err != nil {
+		return nil, err
+	}
+
+	res, err := tx.ExecContext(ctx, `DELETE FROM actions WHERE id = ?;`, action.ID)
+	if err != nil {
+		return nil, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if affected == 0 {
+		return nil, domain.ErrNotFound
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return someday, nil
+}

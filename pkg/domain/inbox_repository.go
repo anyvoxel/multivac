@@ -1,6 +1,9 @@
 package domain
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 type InboxRepository interface {
 	Migrate(ctx context.Context) error
@@ -9,4 +12,5 @@ type InboxRepository interface {
 	List(ctx context.Context, q InboxListQuery) ([]*Inbox, error)
 	Update(ctx context.Context, inbox *Inbox) error
 	Delete(ctx context.Context, id string) error
+	ConvertFromSomeday(ctx context.Context, somedayID string, title, description *string, now time.Time) (*Inbox, error)
 }

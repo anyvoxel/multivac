@@ -34,6 +34,11 @@ type CreateInboxCmd struct {
 
 type UpdateInboxCmd = CreateInboxCmd
 
+type ConvertInboxFromSomedayCmd struct {
+	Title       *string
+	Description *string
+}
+
 func (s *InboxService) Migrate(ctx context.Context) error { return s.repo.Migrate(ctx) }
 
 func (s *InboxService) Create(ctx context.Context, cmd CreateInboxCmd) (*domain.Inbox, error) {
@@ -75,3 +80,7 @@ func (s *InboxService) Update(ctx context.Context, id string, cmd UpdateInboxCmd
 }
 
 func (s *InboxService) Delete(ctx context.Context, id string) error { return s.repo.Delete(ctx, id) }
+
+func (s *InboxService) ConvertFromSomeday(ctx context.Context, somedayID string, cmd ConvertInboxFromSomedayCmd) (*domain.Inbox, error) {
+	return s.repo.ConvertFromSomeday(ctx, somedayID, cmd.Title, cmd.Description, s.now().UTC())
+}

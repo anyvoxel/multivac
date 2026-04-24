@@ -18,6 +18,8 @@ import {
 } from "@mdxeditor/editor";
 
 import { convertInboxToAction, convertActionKind, type ActionKind, type ActionAttributes } from "./lib/actions";
+import { convertActionToSomeday } from "./lib/somedays";
+import { convertSomedayToInbox } from "./lib/inboxes";
 import {
   createProject,
   deleteProject,
@@ -710,7 +712,7 @@ export default function App() {
   const [clarifyError, setClarifyError] = useState("");
 
   // Convert action kind dialog state
-  type ConvertActionTargetType = "task" | "waiting" | "scheduled";
+  type ConvertActionTargetType = "task" | "waiting" | "scheduled" | "someday";
   const [convertAction, setConvertAction] = useState<{ id: string; title: string; currentKind: ActionKind } | null>(null);
   const [convertActionType, setConvertActionType] = useState<ConvertActionTargetType>("task");
   const [convertActionOwner, setConvertActionOwner] = useState("");
@@ -909,6 +911,16 @@ export default function App() {
     setConvertActionSaving(true);
     setConvertActionError("");
     try {
+      // Handle conversion to Someday
+      if (convertActionType === "someday") {
+        await convertActionToSomeday(convertAction.id);
+        await Promise.all([refreshWaitingLists(), refreshSchedule(), refreshSomedays()]);
+        setTaskListVersion((v) => v + 1);
+        closeConvertActionDialog();
+        closeDrawer();
+        return;
+      }
+
       const targetKind: ActionKind = convertActionType === "task" ? "Task" : convertActionType === "waiting" ? "Waiting" : "Scheduled";
       if (targetKind === convertAction.currentKind) {
         setConvertActionError("不能转换为相同类型");
@@ -2146,6 +2158,7 @@ export default function App() {
                   { type: "task" as const, label: "下一步", disabled: convertAction.currentKind === "Task" },
                   { type: "waiting" as const, label: "等待中", disabled: convertAction.currentKind === "Waiting" },
                   { type: "scheduled" as const, label: "日程", disabled: convertAction.currentKind === "Scheduled" },
+                  { type: "someday" as const, label: "将来/也许", disabled: false },
                 ].map((item, index) => (
                   <button
                     key={item.type}
@@ -2360,6 +2373,13 @@ export default function App() {
                   setDrawer({ type: "none" });
                   setDrawerSomeday(null);
                 }}
+                onMoveToInbox={drawer.mode === "edit" && drawerSomeday ? async () => {
+                  if (!confirm(`确定将 "${drawerSomeday.name}" 放入收集箱?`)) return;
+                  await convertSomedayToInbox(drawerSomeday.id);
+                  await Promise.all([refreshSomedays(), refreshInboxes()]);
+                  setDrawer({ type: "none" });
+                  setDrawerSomeday(null);
+                } : undefined}
               />
             ) : drawer.type === "waitingList" ? (
               <WaitingListDrawerForm
@@ -5355,6 +5375,7 @@ function SomedayDrawerForm(props: {
   mode: "create" | "edit";
   onChange: (someday: Someday | null) => void;
   onDelete: () => Promise<void>;
+  onMoveToInbox?: () => void;
 }) {
   const someday = props.someday;
   if (!someday) return <div className="px-4 py-6 text-sm text-[#6B7280]">无数据</div>;
@@ -5373,7 +5394,16 @@ function SomedayDrawerForm(props: {
       </Field>
 
       {props.mode === "edit" ? (
-        <div className="pt-2">
+        <div className="flex gap-2 pt-2">
+          {props.onMoveToInbox ? (
+            <button
+              className="rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm text-[#4F46E5] hover:bg-[#F5F6FA]"
+              type="button"
+              onClick={props.onMoveToInbox}
+            >
+              放入收集箱
+            </button>
+          ) : null}
           <button
             className="rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm text-[#DC2626] hover:bg-[#F5F6FA]"
             type="button"
@@ -5402,10 +5432,11 @@ function WaitingListDrawerForm(props: {
         <TextInput value={waitingList.name} onChange={(v) => props.onChange({ ...waitingList, name: v })} />
       </Field>
       <Field label="详细信息">
-        <TextArea
+        <MarkdownEditor
           value={waitingList.details}
           onChange={(v) => props.onChange({ ...waitingList, details: v })}
-          rows={8}
+          placeholder="输入详细描述，支持 Markdown 格式"
+          contentClassName="project-md-editor__content--tall"
         />
       </Field>
       <Field label="负责人">
@@ -5459,7 +5490,12 @@ function ScheduledDrawerForm(props: {
         <TextInput value={action.title} onChange={(v) => props.onChange({ ...action, title: v })} />
       </Field>
       <Field label="描述（可选）">
-        <TextArea value={action.description} onChange={(v) => props.onChange({ ...action, description: v })} rows={4} />
+        <MarkdownEditor
+          value={action.description}
+          onChange={(v) => props.onChange({ ...action, description: v })}
+          placeholder="输入详细描述，支持 Markdown 格式"
+          contentClassName="project-md-editor__content--tall"
+        />
       </Field>
       <Field label="开始时间">
         <input
@@ -5535,6 +5571,17 @@ function TaskDrawerForm(props: {
         />
       </Field>
 
+      <Field label="状态">
+        <select
+          className="w-full rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm"
+          value={t.status}
+          onChange={(e) => props.onChange({ ...t, status: e.target.value as TaskStatus })}
+        >
+          <option value="Pending">待处理</option>
+          <option value="Active">进行中</option>
+          <option value="Completed">已完成</option>
+        </select>
+      </Field>
 
       <Field label="截止日期">
         <input

@@ -79,6 +79,11 @@ type updateInboxReq struct {
 	Description string `json:"description"`
 }
 
+type convertInboxFromSomedayReq struct {
+	Name        *string `json:"name"`
+	Description *string `json:"description"`
+}
+
 type inboxResp struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`
@@ -173,4 +178,27 @@ func (h *InboxHandler) Delete(c context.Context, ctx *app.RequestContext) {
 		return
 	}
 	ctx.Status(stdhttp.StatusNoContent)
+}
+
+func (h *InboxHandler) ConvertFromSomeday(c context.Context, ctx *app.RequestContext) {
+	var req convertInboxFromSomedayReq
+	if len(ctx.Request.Body()) > 0 {
+		if err := ctx.BindJSON(&req); err != nil {
+			ctx.JSON(stdhttp.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+	}
+	var title, description *string
+	if req.Name != nil {
+		title = req.Name
+	}
+	if req.Description != nil {
+		description = req.Description
+	}
+	inbox, err := h.svc.ConvertFromSomeday(c, ctx.Param("id"), application.ConvertInboxFromSomedayCmd{Title: title, Description: description})
+	if err != nil {
+		writeInboxErr(ctx, err)
+		return
+	}
+	ctx.JSON(stdhttp.StatusCreated, toInboxResp(inbox))
 }

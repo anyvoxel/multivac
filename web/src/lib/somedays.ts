@@ -28,6 +28,11 @@ export type ConvertInboxToSomedayInput = {
   description?: string;
 };
 
+export type ConvertActionToSomedayInput = {
+  name?: string;
+  description?: string;
+};
+
 export type SomedaySortBy = "CreatedAt" | "UpdatedAt" | "Name";
 
 export type ListSomedaysQuery = {
@@ -135,6 +140,21 @@ export async function convertInboxToSomeday(id: string, input?: ConvertInboxToSo
     : undefined;
   return fromApiSomeday(
     await request<ApiSomeday>(`/api/v1/inboxes/${encodeURIComponent(id)}/convert-to-someday`, {
+      method: "POST",
+      ...(body ? { body } : {}),
+    }),
+  );
+}
+
+export async function convertActionToSomeday(id: string, input?: ConvertActionToSomedayInput): Promise<Someday> {
+  const body = input
+    ? JSON.stringify({
+        ...(input.name !== undefined ? { title: input.name } : {}),
+        ...(input.description !== undefined ? { description: input.description } : {}),
+      })
+    : undefined;
+  return fromApiSomeday(
+    await request<ApiSomeday>(`/api/v1/actions/${encodeURIComponent(id)}/convert-to-someday`, {
       method: "POST",
       ...(body ? { body } : {}),
     }),

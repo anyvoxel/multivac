@@ -84,6 +84,11 @@ type convertSomedayInboxReq struct {
 	Description *string `json:"description"`
 }
 
+type convertSomedayActionReq struct {
+	Title       *string `json:"title"`
+	Description *string `json:"description"`
+}
+
 type somedayResp struct {
 	ID          string    `json:"id"`
 	Title       string    `json:"title"`
@@ -131,6 +136,22 @@ func (h *SomedayHandler) ConvertFromInbox(c context.Context, ctx *app.RequestCon
 		}
 	}
 	someday, err := h.svc.ConvertFromInbox(c, ctx.Param("id"), application.ConvertSomedayFromInboxCmd{Title: req.Title, Description: req.Description})
+	if err != nil {
+		writeSomedayErr(ctx, err)
+		return
+	}
+	ctx.JSON(stdhttp.StatusCreated, toSomedayResp(someday))
+}
+
+func (h *SomedayHandler) ConvertFromAction(c context.Context, ctx *app.RequestContext) {
+	var req convertSomedayActionReq
+	if len(ctx.Request.Body()) > 0 {
+		if err := ctx.BindJSON(&req); err != nil {
+			ctx.JSON(stdhttp.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+	}
+	someday, err := h.svc.ConvertFromAction(c, ctx.Param("id"), application.ConvertSomedayFromActionCmd{Title: req.Title, Description: req.Description})
 	if err != nil {
 		writeSomedayErr(ctx, err)
 		return

@@ -39,6 +39,11 @@ type ConvertSomedayFromInboxCmd struct {
 	Description *string
 }
 
+type ConvertSomedayFromActionCmd struct {
+	Title       *string
+	Description *string
+}
+
 func (s *SomedayService) Migrate(ctx context.Context) error { return s.repo.Migrate(ctx) }
 
 func (s *SomedayService) Create(ctx context.Context, cmd CreateSomedayCmd) (*domain.Someday, error) {
@@ -59,6 +64,10 @@ func (s *SomedayService) Create(ctx context.Context, cmd CreateSomedayCmd) (*dom
 
 func (s *SomedayService) ConvertFromInbox(ctx context.Context, inboxID string, cmd ConvertSomedayFromInboxCmd) (*domain.Someday, error) {
 	return s.repo.ConvertFromInbox(ctx, inboxID, cmd.Title, cmd.Description, s.now().UTC())
+}
+
+func (s *SomedayService) ConvertFromAction(ctx context.Context, actionID string, cmd ConvertSomedayFromActionCmd) (*domain.Someday, error) {
+	return s.repo.ConvertFromAction(ctx, actionID, cmd.Title, cmd.Description, s.now().UTC())
 }
 
 func (s *SomedayService) Get(ctx context.Context, id string) (*domain.Someday, error) {

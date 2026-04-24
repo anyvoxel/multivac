@@ -81,3 +81,21 @@ export async function updateInbox(id: string, input: UpdateInboxInput): Promise<
 export async function deleteInbox(id: string): Promise<void> {
   await request<void>(`/api/v1/inboxes/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
+
+export type ConvertSomedayToInboxInput = {
+  name?: string;
+  description?: string;
+};
+
+export async function convertSomedayToInbox(id: string, input?: ConvertSomedayToInboxInput): Promise<Inbox> {
+  const body = input
+    ? JSON.stringify({
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.description !== undefined ? { description: input.description } : {}),
+      })
+    : undefined;
+  return request<Inbox>(`/api/v1/somedays/${encodeURIComponent(id)}/convert-to-inbox`, {
+    method: "POST",
+    ...(body ? { body } : {}),
+  });
+}

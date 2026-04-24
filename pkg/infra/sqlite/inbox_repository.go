@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/mattn/go-sqlite3"
@@ -171,4 +172,68 @@ func (r *InboxRepository) Delete(ctx context.Context, id string) error {
 		return domain.ErrNotFound
 	}
 	return nil
+}
+
+type inboxSomedayRow struct {
+	ID          string `db:"id"`
+	Title       string `db:"title"`
+	Description string `db:"description"`
+}
+
+func (r *InboxRepository) ConvertFromSomeday(ctx context.Context, somedayID string, title, description *string, now time.Time) (*domain.Inbox, error) {
+	tx, err := r.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var someday inboxSomedayRow
+	if err := tx.GetContext(ctx, &someday, `SELECT id, title, description FROM somedays WHERE id = ?;`, somedayID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, err
+	}
+
+	finalTitle := someday.Title
+	if title != nil {
+		finalTitle = *title
+	}
+	finalDescription := someday.Description
+	if description != nil {
+		finalDescription = *description
+	}
+
+	inbox, err := domain.NewInbox(someday.ID, finalTitle, finalDescription, now.UTC())
+	if err != nil {
+		return nil, err
+	}
+
+	const insertInbox = `INSERT INTO inboxes (id, title, description, created_at, updated_at) VALUES (:id, :title, :description, :created_at, :updated_at);`
+	if _, err := tx.NamedExecContext(ctx, insertInbox, map[string]any{
+		"id":          inbox.ID,
+		"title":       inbox.Title,
+		"description": inbox.Description,
+		"created_at":  inbox.CreatedAt,
+		"updated_at":  inbox.UpdatedAt,
+	}); err != nil {
+		return nil, err
+	}
+
+	res, err := tx.ExecContext(ctx, `DELETE FROM somedays WHERE id = ?;`, someday.ID)
+	if err != nil {
+		return nil, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if affected == 0 {
+		return nil, domain.ErrNotFound
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return inbox, nil
 }
