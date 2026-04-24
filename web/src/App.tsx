@@ -632,8 +632,8 @@ export default function App() {
   const [route, setRoute] = useState<Route>("projects");
 
   const [search, setSearch] = useState<string>("");
-  const [contextFilterInput, setContextFilterInput] = useState<string>("");
   const [tagFilterInput, setTagFilterInput] = useState<string>("");
+  const [taskContextIds, setTaskContextIds] = useState<string[]>([]);
 
   // Projects list page state
   const [loading, setLoading] = useState(false);
@@ -766,7 +766,6 @@ export default function App() {
   });
 
   const normalizedSearch = search.trim();
-  const normalizedContexts = parseLabelFilterInput(contextFilterInput);
   const normalizedTags = parseLabelFilterInput(tagFilterInput);
 
   function setDrawerInbox(next: Inbox | null) {
@@ -1093,7 +1092,7 @@ export default function App() {
       const [tasks, lists, actions] = await Promise.all([
         listTasks({
           search: normalizedSearch || undefined,
-          contexts: normalizedContexts.length ? normalizedContexts : undefined,
+          contextIds: taskContextIds.length > 0 ? taskContextIds : undefined,
           tags: normalizedTags.length ? normalizedTags : undefined,
           sortBy: "DueAt",
           sortDir: "Asc",
@@ -1113,7 +1112,7 @@ export default function App() {
 
   useEffect(() => {
     setProjectOffset(0);
-  }, [projectStatusFilter, search, contextFilterInput, tagFilterInput, projectPageSize]);
+  }, [projectStatusFilter, search, tagFilterInput, projectPageSize]);
 
   useEffect(() => {
     setInboxOffset(0);
@@ -1152,6 +1151,24 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route, contextOffset, contextPageSize, normalizedSearch]);
 
+  // Load contexts when entering tasks or schedule page
+  useEffect(() => {
+    if (route !== "tasks" && route !== "schedule") return;
+    if (contexts.length === 0) {
+      void loadAllContexts();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route]);
+
+  async function loadAllContexts() {
+    try {
+      const list = await listContexts({});
+      setContexts(list);
+    } catch (e) {
+      console.error("Failed to load contexts:", e);
+    }
+  }
+
   useEffect(() => {
     if (route !== "references") return;
     void refreshReferences();
@@ -1174,7 +1191,7 @@ export default function App() {
     if (route !== "schedule") return;
     void refreshSchedule();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route, normalizedSearch, contextFilterInput, tagFilterInput]);
+  }, [route, normalizedSearch, taskContextIds, tagFilterInput]);
 
   const pageLabelMap: Record<Route, string> = {
     projects: "项目管理",
@@ -1243,7 +1260,7 @@ export default function App() {
           name: "",
           description: "",
           labels: [],
-          context: "默认",
+          contexts: [],
           details: "",
           status: "Pending",
           priority: "Medium",
@@ -1729,14 +1746,24 @@ export default function App() {
                     </button>
                   ) : null}
                 </div>
-                {route === "tasks" || route === "schedule" ? (
+                {route === "schedule" ? (
                   <>
-                    <input
+                    <select
+                      multiple
                       className="w-36 rounded-md border border-[#E6E8F0] bg-white px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#4F46E5]"
-                      placeholder="情境(@office)"
-                      value={contextFilterInput}
-                      onChange={(e) => setContextFilterInput(e.target.value)}
-                    />
+                      value={taskContextIds}
+                      onChange={(e) => {
+                        const selected = Array.from(e.target.selectedOptions, (opt) => opt.value);
+                        setTaskContextIds(selected.filter((v) => v !== ""));
+                      }}
+                    >
+                      <option value="">全部情境</option>
+                      {contexts.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.title}
+                        </option>
+                      ))}
+                    </select>
                     <input
                       className="w-36 rounded-md border border-[#E6E8F0] bg-white px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#4F46E5]"
                       placeholder="标签(#urgent)"
@@ -1828,13 +1855,17 @@ export default function App() {
             ) : route === "tasks" ? (
               <TasksPageNew
                 projects={allProjects}
+                contexts={contexts}
                 projectId={taskProjectId}
+                contextIds={taskContextIds}
                 search={normalizedSearch}
-                contextFilterInput={contextFilterInput}
                 tagFilterInput={tagFilterInput}
                 version={taskListVersion}
                 highlightTaskId={highlightTaskId}
                 onProjectId={setTaskProjectId}
+                onContextIds={setTaskContextIds}
+                onSearch={setSearch}
+                onTagFilterInput={setTagFilterInput}
                 onOpen={(id, t) => void openTaskDrawer("edit", id, t)}
               />
             ) : route === "inboxes" ? (
@@ -2347,6 +2378,7 @@ export default function App() {
                 task={drawerTask}
                 mode={drawer.mode}
                 projects={allProjects}
+                contexts={contexts}
                 onChange={setDrawerTask}
                 onDelete={async () => {
                   if (!drawerTask) return;
@@ -2492,7 +2524,7 @@ export default function App() {
             name: drawerTask.name,
             description: drawerTask.description,
             labels: drawerTask.labels,
-            context: drawerTask.context,
+            contexts: drawerTask.contexts,
             details: drawerTask.details,
             priority: drawerTask.priority,
             dueAt: dueISO,
@@ -2509,7 +2541,7 @@ export default function App() {
           name: drawerTask.name,
           description: drawerTask.description,
           labels: drawerTask.labels,
-          context: drawerTask.context,
+          contexts: drawerTask.contexts,
           details: drawerTask.details,
           priority: drawerTask.priority,
           dueAt: dueISO ?? "",
@@ -4197,13 +4229,17 @@ function SchedulePage(props: {
 
 function TasksPageNew(props: {
   projects: Project[];
+  contexts: ManagedContext[];
   projectId: string;
+  contextIds: string[];
   search: string;
-  contextFilterInput: string;
   tagFilterInput: string;
   version: number;
   highlightTaskId: string | null;
   onProjectId: (v: string) => void;
+  onContextIds: (v: string[]) => void;
+  onSearch: (v: string) => void;
+  onTagFilterInput: (v: string) => void;
   onOpen: (id: string, t?: Task) => void;
 }) {
   const [loading, setLoading] = useState(false);
@@ -4214,6 +4250,7 @@ function TasksPageNew(props: {
   const [hasNext, setHasNext] = useState(false);
   const [sortDir, setSortDir] = useState<SortDir | null>("Asc");
   const [columnWidths, setColumnWidths] = useState<TaskColumnWidths>(() => loadTaskColumnWidths());
+  const [contextDropdownOpen, setContextDropdownOpen] = useState(false);
 
   useEffect(() => {
     window.localStorage.setItem(TASK_COLUMN_WIDTHS_STORAGE_KEY, JSON.stringify(columnWidths));
@@ -4295,7 +4332,7 @@ function TasksPageNew(props: {
       const list = await listTasks({
         projectId: props.projectId || undefined,
         search: props.search || undefined,
-        contexts: parseLabelFilterInput(props.contextFilterInput),
+        contextIds: props.contextIds.length > 0 ? props.contextIds : undefined,
         tags: parseLabelFilterInput(props.tagFilterInput),
         sortBy: sortDir ? "DueAt" : undefined,
         sortDir: sortDir || undefined,
@@ -4313,16 +4350,20 @@ function TasksPageNew(props: {
 
   useEffect(() => {
     setOffset(0);
-  }, [props.projectId, props.search, props.contextFilterInput, props.tagFilterInput, sortDir, pageSize]);
+  }, [props.projectId, props.search, props.contextIds, props.tagFilterInput, sortDir, pageSize]);
 
   useEffect(() => {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.projectId, props.search, props.contextFilterInput, props.tagFilterInput, props.version, sortDir, offset, pageSize]);
+  }, [props.projectId, props.search, props.contextIds, props.tagFilterInput, props.version, sortDir, offset, pageSize]);
 
   const projectNameById = useMemo(() => {
     return new Map(props.projects.map((p) => [p.id, p.title]));
   }, [props.projects]);
+
+  const contextById = useMemo(() => {
+    return new Map(props.contexts.map((c) => [c.id, c]));
+  }, [props.contexts]);
 
   useEffect(() => {
     if (!props.highlightTaskId) return;
@@ -4333,13 +4374,34 @@ function TasksPageNew(props: {
     return () => window.clearTimeout(timer);
   }, [props.highlightTaskId, items]);
 
+  const selectedContexts = props.contexts.filter((c) => props.contextIds.includes(c.id));
+
+  function toggleContext(id: string) {
+    if (props.contextIds.includes(id)) {
+      props.onContextIds(props.contextIds.filter((i) => i !== id));
+    } else {
+      props.onContextIds([...props.contextIds, id]);
+    }
+  }
+
   return (
     <div className="mx-auto grid w-full max-w-7xl gap-3">
       <div className="flex items-center justify-between">
         <div className="text-lg font-semibold text-[#111827]">下一步</div>
         <div className="flex items-center gap-2">
+          <div className="relative">
+            <div className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[#9CA3AF]">
+              <IconSearch />
+            </div>
+            <input
+              className="w-48 rounded-md border border-[#E6E8F0] bg-white py-1.5 pl-8 pr-2 text-sm outline-none focus:ring-2 focus:ring-[#4F46E5]"
+              placeholder="搜索..."
+              value={props.search}
+              onChange={(e) => props.onSearch(e.target.value)}
+            />
+          </div>
           <select
-            className="rounded-md border border-[#E6E8F0] bg-white px-2 py-1 text-sm text-[#374151]"
+            className="rounded-md border border-[#E6E8F0] bg-white px-2 py-1.5 text-sm text-[#374151]"
             value={props.projectId}
             onChange={(e) => props.onProjectId(e.target.value)}
           >
@@ -4350,6 +4412,62 @@ function TasksPageNew(props: {
               </option>
             ))}
           </select>
+          <div className="relative">
+            <button
+              type="button"
+              className="flex min-h-[34px] min-w-[100px] items-center gap-1 rounded-md border border-[#E6E8F0] bg-white px-2 py-1.5 text-sm text-[#374151]"
+              onClick={() => setContextDropdownOpen(!contextDropdownOpen)}
+              onBlur={() => setTimeout(() => setContextDropdownOpen(false), 100)}
+            >
+              {selectedContexts.length === 0 ? (
+                <span>全部情境</span>
+              ) : (
+                <div className="flex flex-wrap gap-1">
+                  {selectedContexts.map((ctx) => (
+                    <span
+                      key={ctx.id}
+                      className="rounded px-1 text-xs text-[#111827]"
+                      style={{ backgroundColor: ctx.color }}
+                    >
+                      {ctx.title}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <span className="ml-auto text-[#9CA3AF]">▼</span>
+            </button>
+            {contextDropdownOpen ? (
+              <div className="absolute z-10 mt-1 max-h-60 w-48 overflow-auto rounded-md border border-[#E6E8F0] bg-white shadow-sm">
+                {props.contexts.map((ctx) => (
+                  <button
+                    key={ctx.id}
+                    type="button"
+                    className={classNames(
+                      "flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-[#F5F6FA]",
+                      props.contextIds.includes(ctx.id) && "bg-[#EEF2FF]",
+                    )}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => toggleContext(ctx.id)}
+                  >
+                    <span
+                      className="h-3 w-3 rounded-sm"
+                      style={{ backgroundColor: ctx.color }}
+                    />
+                    <span className="text-[#111827]">{ctx.title}</span>
+                    {props.contextIds.includes(ctx.id) ? (
+                      <span className="ml-auto text-[#4F46E5]">✓</span>
+                    ) : null}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+          <input
+            className="w-28 rounded-md border border-[#E6E8F0] bg-white px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#4F46E5]"
+            placeholder="标签(#urgent)"
+            value={props.tagFilterInput}
+            onChange={(e) => props.onTagFilterInput(e.target.value)}
+          />
           <button
             className="flex items-center gap-1 rounded-md border border-[#E6E8F0] bg-white px-3 py-1 text-sm text-[#374151] hover:bg-[#F5F6FA]"
             type="button"
@@ -4403,7 +4521,26 @@ function TasksPageNew(props: {
                 )}
               >
                 <td className="px-4 py-3">
-                  <div className="font-medium text-[#111827]">{t.name}</div>
+                  <div className="flex flex-col gap-1">
+                    <div className="font-medium text-[#111827]">{t.name}</div>
+                    {t.contexts.length > 0 ? (
+                      <div className="flex flex-wrap gap-1">
+                        {t.contexts.map((ctxId) => {
+                          const ctx = contextById.get(ctxId);
+                          if (!ctx) return null;
+                          return (
+                            <span
+                              key={ctxId}
+                              className="rounded-full px-2 py-0.5 text-xs text-[#111827]"
+                              style={{ backgroundColor: ctx.color }}
+                            >
+                              {ctx.title}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </div>
                 </td>
                 <td className="px-4 py-3">
                   <Badge color={taskStatusColor(t.status)}>
@@ -4764,6 +4901,90 @@ function LabelEditor(props: { labels: Label[]; onChange: (labels: Label[]) => vo
         >
           添加
         </button>
+      </div>
+    </div>
+  );
+}
+
+function ContextPicker(props: {
+  contexts: ManagedContext[];
+  selectedIds: string[];
+  onChange: (ids: string[]) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const selectedContexts = props.contexts.filter((c) => props.selectedIds.includes(c.id));
+  const filteredContexts = props.contexts.filter(
+    (c) => !props.selectedIds.includes(c.id) && c.title.toLowerCase().includes(query.toLowerCase()),
+  );
+
+  function addContext(id: string) {
+    if (!props.selectedIds.includes(id)) {
+      props.onChange([...props.selectedIds, id]);
+    }
+    setQuery("");
+    setOpen(false);
+    inputRef.current?.blur();
+  }
+
+  function removeContext(id: string) {
+    props.onChange(props.selectedIds.filter((i) => i !== id));
+  }
+
+  return (
+    <div className="grid gap-2">
+      <div className="flex flex-wrap gap-2">
+        {selectedContexts.map((ctx) => (
+          <div
+            key={ctx.id}
+            className="flex items-center gap-2 rounded-full px-2 py-1 text-xs"
+            style={{ backgroundColor: ctx.color }}
+          >
+            <span className="font-medium text-[#111827]">
+              {ctx.title}
+            </span>
+            <button
+              type="button"
+              className="text-[#374151] hover:text-[#DC2626]"
+              onClick={() => removeContext(ctx.id)}
+            >
+              ×
+            </button>
+          </div>
+        ))}
+      </div>
+      <div className="relative">
+        <input
+          ref={inputRef}
+          className="w-full rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#4F46E5]"
+          value={open ? query : ""}
+          placeholder="搜索添加情境..."
+          onFocus={() => setOpen(true)}
+          onBlur={() => setOpen(false)}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        {open ? (
+          <div className="absolute z-10 mt-1 max-h-40 w-full overflow-auto rounded-md border border-[#E6E8F0] bg-white shadow-sm">
+            {filteredContexts.length > 0 ? (
+              filteredContexts.map((ctx) => (
+                <button
+                  key={ctx.id}
+                  type="button"
+                  className="block w-full px-3 py-2 text-left text-sm text-[#111827] hover:opacity-80"
+                  style={{ backgroundColor: ctx.color }}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => addContext(ctx.id)}
+                >
+                  {ctx.title}
+                </button>
+              ))
+            ) : (
+              <div className="px-3 py-2 text-sm text-[#6B7280]">无可选情境</div>
+            )}
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -5552,6 +5773,7 @@ function TaskDrawerForm(props: {
   task: Task | null;
   mode: "create" | "edit";
   projects: Project[];
+  contexts: ManagedContext[];
   onChange: (t: Task | null) => void;
   onDelete: () => Promise<void>;
   onConvert?: () => void;
@@ -5600,12 +5822,17 @@ function TaskDrawerForm(props: {
           contentClassName="project-md-editor__content--tall"
         />
       </Field>
-      <Field label="标签（@=情境，#=标签，无前缀不可筛选）">
-        <LabelEditor labels={t.labels} onChange={(labels) => props.onChange({ ...t, labels })} placeholder="@office #urgent 想法" />
+
+      <Field label="情境（可多选）">
+        <ContextPicker
+          contexts={props.contexts}
+          selectedIds={t.contexts}
+          onChange={(ids) => props.onChange({ ...t, contexts: ids })}
+        />
       </Field>
 
-      <Field label="情境分类">
-        <TextInput value={t.context} onChange={(v) => props.onChange({ ...t, context: v })} />
+      <Field label="标签（#=标签，无前缀不可筛选）">
+        <LabelEditor labels={t.labels} onChange={(labels) => props.onChange({ ...t, labels })} placeholder="#urgent 想法" />
       </Field>
 
       {props.mode === "edit" ? (

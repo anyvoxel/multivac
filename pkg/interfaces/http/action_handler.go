@@ -229,6 +229,21 @@ func (h *ActionHandler) List(c context.Context, ctx *app.RequestContext) {
 	if projectID := strings.TrimSpace(ctx.Query("projectId")); projectID != "" {
 		q.ProjectID = &projectID
 	}
+	if ctxIds := strings.TrimSpace(ctx.Query("contextIds")); ctxIds != "" {
+		ids := strings.Split(ctxIds, ",")
+		seen := make(map[string]struct{})
+		for _, id := range ids {
+			v := strings.TrimSpace(id)
+			if v == "" {
+				continue
+			}
+			if _, exists := seen[v]; exists {
+				continue
+			}
+			seen[v] = struct{}{}
+			q.ContextIDs = append(q.ContextIDs, v)
+		}
+	}
 	sorts, err := parseActionSort(ctx)
 	if err != nil {
 		writeActionErr(ctx, err)

@@ -20,7 +20,7 @@ export type Task = {
   name: string;
   description: string;
   labels: Label[];
-  context: string;
+  contexts: string[];
   details: string;
   status: TaskStatus;
   priority: TaskPriority;
@@ -34,7 +34,7 @@ export type CreateTaskInput = {
   name: string;
   description: string;
   labels: Label[];
-  context: string;
+  contexts: string[];
   details: string;
   priority: TaskPriority;
   // RFC3339 string, use "" to clear.
@@ -47,7 +47,7 @@ export type UpdateTaskInput = {
   name: string;
   description: string;
   labels: Label[];
-  context: string;
+  contexts: string[];
   details: string;
   priority: TaskPriority;
   dueAt?: string;
@@ -58,7 +58,7 @@ export type ListTasksQuery = {
   projectId?: string;
   status?: TaskStatus;
   search?: string;
-  contexts?: string[];
+  contextIds?: string[];
   tags?: string[];
   sortBy?: TaskSortBy;
   sortDir?: SortDir;
@@ -111,7 +111,7 @@ function fromAction(action: Action): Task {
     name: action.title,
     description: action.description,
     labels,
-    context: action.context[0] ?? "默认",
+    contexts: action.context,
     details: "",
     status: action.attributes.task?.status ?? "Pending",
     priority: "Medium",
@@ -147,13 +147,6 @@ function sortByDueAt(list: Task[], dir: SortDir): Task[] {
     .map((x) => x.item);
 }
 
-function matchesContexts(task: Task, contexts?: string[]): boolean {
-  if (!contexts || contexts.length === 0) return true;
-  const context = task.context.trim().toLowerCase();
-  if (!context) return false;
-  return contexts.some((value) => context === value.trim().toLowerCase());
-}
-
 function matchesTags(task: Task, tags?: string[]): boolean {
   if (!tags || tags.length === 0) return true;
   const wanted = new Set(tags.map((tag) => tag.trim().toLowerCase()).filter(Boolean));
@@ -176,7 +169,6 @@ export async function listTasksByProject(
 export async function listTasks(q?: ListTasksQuery): Promise<Task[]> {
   const needLocalProcess =
     q?.sortBy === "DueAt" ||
-    (q?.contexts?.length ?? 0) > 0 ||
     (q?.tags?.length ?? 0) > 0 ||
     !!q?.status;
 
@@ -184,6 +176,7 @@ export async function listTasks(q?: ListTasksQuery): Promise<Task[]> {
     search: q?.search,
     kind: "Task",
     projectId: q?.projectId,
+    contextIds: q?.contextIds,
     sortDir: q?.sortDir,
     limit: needLocalProcess ? undefined : q?.limit,
     offset: needLocalProcess ? undefined : q?.offset,
@@ -191,7 +184,6 @@ export async function listTasks(q?: ListTasksQuery): Promise<Task[]> {
 
   let list = actions.filter((action) => action.kind === "Task").map(fromAction);
   list = list.filter((task) => matchesStatus(task, q?.status));
-  list = list.filter((task) => matchesContexts(task, q?.contexts));
   list = list.filter((task) => matchesTags(task, q?.tags));
 
   if (q?.sortBy === "DueAt") {
@@ -223,7 +215,7 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
       description: input.description,
       projectId: input.projectId,
       kind: "Task",
-      context: input.context.trim() ? [input.context.trim()] : [],
+      context: input.contexts.filter((c) => c.trim()),
       labels: input.labels.map(toActionLabel),
       attributes: {
         task: {
@@ -245,7 +237,7 @@ export async function updateTask(
       description: input.description,
       projectId: input.projectId,
       kind: "Task",
-      context: input.context.trim() ? [input.context.trim()] : [],
+      context: input.contexts.filter((c) => c.trim()),
       labels: input.labels.map(toActionLabel),
       attributes: {
         task: {

@@ -190,6 +190,14 @@ func applyActionFilters(base string, q domain.ActionListQuery, args []any) (stri
 		base += " AND project_id = ?"
 		args = append(args, strings.TrimSpace(*q.ProjectID))
 	}
+	if len(q.ContextIDs) > 0 {
+		placeholders := make([]string, len(q.ContextIDs))
+		for i, ctxID := range q.ContextIDs {
+			placeholders[i] = "?"
+			args = append(args, strings.TrimSpace(ctxID))
+		}
+		base += " AND EXISTS (SELECT 1 FROM json_each(context) WHERE value IN (" + strings.Join(placeholders, ", ") + "))"
+	}
 	return base, args
 }
 

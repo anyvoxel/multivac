@@ -19,13 +19,14 @@ type Sort struct {
 }
 
 type ListQuery struct {
-	Search    string
-	Kind      *Kind
-	ProjectID *string
-	Status    *Status
-	Sorts     []Sort
-	Limit     int
-	Offset    int
+	Search     string
+	Kind       *Kind
+	ProjectID  *string
+	Status     *Status
+	ContextIDs []string
+	Sorts      []Sort
+	Limit      int
+	Offset     int
 }
 
 type ActionListQuery = ListQuery
