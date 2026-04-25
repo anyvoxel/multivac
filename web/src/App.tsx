@@ -1,25 +1,11 @@
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { TextareaHTMLAttributes, InputHTMLAttributes } from "react";
-import {
-  BlockTypeSelect,
-  BoldItalicUnderlineToggles,
-  CreateLink,
-  ListsToggle,
-  MDXEditor,
-  type MDXEditorMethods,
-  headingsPlugin,
-  linkPlugin,
-  listsPlugin,
-  markdownShortcutPlugin,
-  quotePlugin,
-  toolbarPlugin,
-  UndoRedo,
-} from "@mdxeditor/editor";
+import type { InputHTMLAttributes } from "react";
 
 import { convertInboxToAction, convertActionKind, type ActionKind, type ActionAttributes } from "./lib/actions";
 import { convertActionToSomeday } from "./lib/somedays";
 import { convertSomedayToInbox } from "./lib/inboxes";
+import { SimpleEditor } from "./components/tiptap-templates/simple/simple-editor";
 import {
   createProject,
   deleteProject,
@@ -1989,10 +1975,13 @@ export default function App() {
                 />
               </Field>
               <Field label="描述（可选）">
-                <TextArea
-                  value={createScheduledDraft.description}
+                <SimpleEditor
+                  content={createScheduledDraft.description}
                   onChange={(v) => setCreateScheduledDraft((prev) => (prev ? { ...prev, description: v } : prev))}
-                  rows={4}
+                  placeholder="输入详细描述"
+                  wrapperClassName="simple-editor-wrapper--embedded rounded-md border border-[#E6E8F0] bg-white"
+                  contentClassName="max-h-[26rem]"
+                  showThemeToggle={false}
                 />
               </Field>
               <Field label="开始时间">
@@ -2086,10 +2075,13 @@ export default function App() {
                 />
               </Field>
               <Field label="描述（可选）">
-                <MarkdownEditor
-                  value={clarifyDescription}
+                <SimpleEditor
+                  content={clarifyDescription}
                   onChange={setClarifyDescription}
-                  placeholder="输入描述，支持 Markdown 格式"
+                  placeholder="输入描述"
+                  wrapperClassName="simple-editor-wrapper--embedded rounded-md border border-[#E6E8F0] bg-white"
+                  contentClassName="max-h-[26rem]"
+                  showThemeToggle={false}
                 />
               </Field>
               {clarifyType === "task" ? (
@@ -3390,7 +3382,7 @@ function InboxesPage(props: {
             ) : null}
             {props.items.map((inbox) => (
               <tr key={inbox.id} className="border-t border-[#E6E8F0] hover:bg-[#F9FAFB]">
-                <td className="px-4 py-3">
+                <td className="px-4 py-3 align-top">
                   <div className="font-medium text-[#111827]">{inbox.name}</div>
                 </td>
                 <td className="px-4 py-3 text-[#6B7280]">{formatDate(inbox.createdAt)}</td>
@@ -4816,30 +4808,6 @@ function SearchableProjectSelect(props: {
   );
 }
 
-function TextArea(
-  props: {
-    value: string;
-    onChange: (v: string) => void;
-    rows?: number;
-    placeholder?: string;
-  } & Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "value" | "onChange" | "rows" | "placeholder">,
-) {
-  const { value, onChange, rows, placeholder, className, ...rest } = props;
-  return (
-    <textarea
-      {...rest}
-      className={classNames(
-        "w-full resize-y rounded-md border border-[#E6E8F0] bg-white px-3 py-2 text-sm text-[#111827] outline-none placeholder:text-[#9CA3AF] focus:ring-2 focus:ring-[#4F46E5]",
-        className,
-      )}
-      value={value}
-      rows={rows ?? 3}
-      placeholder={placeholder}
-      onChange={(e) => onChange(e.target.value)}
-    />
-  );
-}
-
 function labelText(label: Label): string {
   if (!label.filterable) return label.value;
   return label.kind === "Context" ? `@${label.value}` : `#${label.value}`;
@@ -4990,58 +4958,6 @@ function ContextPicker(props: {
   );
 }
 
-function MarkdownEditor(props: {
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
-  contentClassName?: string;
-}) {
-  const ref = useRef<MDXEditorMethods>(null);
-  const valueRef = useRef(props.value);
-
-  useEffect(() => {
-    if (props.value !== valueRef.current) {
-      ref.current?.setMarkdown(props.value);
-      valueRef.current = props.value;
-    }
-  }, [props.value]);
-
-  return (
-    <div className="project-md-editor rounded-md border border-[#E6E8F0] bg-white text-sm text-[#111827] focus-within:ring-2 focus-within:ring-[#4F46E5]">
-      <MDXEditor
-        ref={ref}
-        markdown={props.value}
-        placeholder={props.placeholder}
-        className="project-md-editor__root"
-        contentEditableClassName={classNames("project-md-editor__content markdown-preview", props.contentClassName)}
-        onChange={(markdown, initialMarkdownNormalize) => {
-          valueRef.current = markdown;
-          if (initialMarkdownNormalize) return;
-          props.onChange(markdown);
-        }}
-        plugins={[
-          headingsPlugin(),
-          listsPlugin(),
-          quotePlugin(),
-          linkPlugin(),
-          markdownShortcutPlugin(),
-          toolbarPlugin({
-            toolbarContents: () => (
-              <>
-                <UndoRedo />
-                <BlockTypeSelect />
-                <BoldItalicUnderlineToggles />
-                <ListsToggle />
-                <CreateLink />
-              </>
-            ),
-          }),
-        ]}
-      />
-    </div>
-  );
-}
-
 function ProjectDrawerForm(props: {
   project: ProjectDrawerState | null;
   mode: "create" | "edit";
@@ -5139,8 +5055,15 @@ function ProjectDrawerForm(props: {
           </button>
         </div>
       </Field>
-      <Field label="项目内容（Markdown）">
-        <MarkdownEditor value={p.description} onChange={(v) => props.onChange({ ...p, description: v })} placeholder="输入项目内容，可自行使用 Markdown 组织结构" />
+      <Field label="项目内容">
+        <SimpleEditor
+          content={p.description}
+          onChange={(v) => props.onChange({ ...p, description: v })}
+          placeholder="输入项目内容"
+          wrapperClassName="simple-editor-wrapper--embedded rounded-md border border-[#E6E8F0] bg-white"
+          contentClassName="max-h-[26rem]"
+          showThemeToggle={false}
+        />
       </Field>
       <Field
         label={
@@ -5251,15 +5174,17 @@ function InboxDrawerForm(props: {
           }}
         />
       </Field>
-      <Field label="详细描述（Markdown）">
-        <MarkdownEditor
-          value={draftDescription}
+      <Field label="详细描述">
+        <SimpleEditor
+          content={draftDescription}
           onChange={(v) => {
             setDraftDescription(v);
             props.onChange({ ...inbox, name: draftName, description: v });
           }}
-          placeholder="输入详细描述，可自行使用 Markdown 组织结构"
-          contentClassName="project-md-editor__content--tall"
+          placeholder="输入详细描述"
+          wrapperClassName="simple-editor-wrapper--embedded rounded-md border border-[#E6E8F0] bg-white"
+          contentClassName="max-h-[26rem]"
+          showThemeToggle={false}
         />
       </Field>
 
@@ -5310,12 +5235,14 @@ function ContextDrawerForm(props: {
           />
         </div>
       </Field>
-      <Field label="详细描述（Markdown）">
-        <MarkdownEditor
-          value={contextItem.description}
+      <Field label="详细描述">
+        <SimpleEditor
+          content={contextItem.description}
           onChange={(v) => props.onChange({ ...contextItem, description: v })}
-          placeholder="输入情境说明，可自行使用 Markdown 组织结构"
-          contentClassName="project-md-editor__content--tall"
+          placeholder="输入情境说明"
+          wrapperClassName="simple-editor-wrapper--embedded rounded-md border border-[#E6E8F0] bg-white"
+          contentClassName="max-h-[26rem]"
+          showThemeToggle={false}
         />
       </Field>
 
@@ -5351,12 +5278,14 @@ function ReferenceDrawerForm(props: {
           placeholder="例如：API 文档、竞品资料、设计规范"
         />
       </Field>
-      <Field label="详细描述（Markdown）">
-        <MarkdownEditor
-          value={reference.description}
+      <Field label="详细描述">
+        <SimpleEditor
+          content={reference.description}
           onChange={(v) => props.onChange({ ...reference, description: v })}
-          placeholder="输入资料说明，可自行使用 Markdown 组织结构"
-          contentClassName="project-md-editor__content--tall"
+          placeholder="输入资料说明"
+          wrapperClassName="simple-editor-wrapper--embedded rounded-md border border-[#E6E8F0] bg-white"
+          contentClassName="max-h-[26rem]"
+          showThemeToggle={false}
         />
       </Field>
       <div className="grid gap-3 rounded-lg border border-[#E6E8F0] bg-[#FBFCFE] px-4 py-4">
@@ -5605,12 +5534,14 @@ function SomedayDrawerForm(props: {
       <Field label="任务名称">
         <TextInput value={someday.name} onChange={(v) => props.onChange({ ...someday, name: v })} />
       </Field>
-      <Field label="描述（Markdown）">
-        <MarkdownEditor
-          value={someday.description}
+      <Field label="描述">
+        <SimpleEditor
+          content={someday.description}
           onChange={(v) => props.onChange({ ...someday, description: v })}
-          placeholder="输入详细描述，可自行使用 Markdown 组织结构"
-          contentClassName="project-md-editor__content--tall"
+          placeholder="输入详细描述"
+          wrapperClassName="simple-editor-wrapper--embedded rounded-md border border-[#E6E8F0] bg-white"
+          contentClassName="max-h-[26rem]"
+          showThemeToggle={false}
         />
       </Field>
 
@@ -5653,11 +5584,13 @@ function WaitingListDrawerForm(props: {
         <TextInput value={waitingList.name} onChange={(v) => props.onChange({ ...waitingList, name: v })} />
       </Field>
       <Field label="详细信息">
-        <MarkdownEditor
-          value={waitingList.details}
+        <SimpleEditor
+          content={waitingList.details}
           onChange={(v) => props.onChange({ ...waitingList, details: v })}
-          placeholder="输入详细描述，支持 Markdown 格式"
-          contentClassName="project-md-editor__content--tall"
+          placeholder="输入详细描述"
+          wrapperClassName="simple-editor-wrapper--embedded rounded-md border border-[#E6E8F0] bg-white"
+          contentClassName="max-h-[26rem]"
+          showThemeToggle={false}
         />
       </Field>
       <Field label="负责人">
@@ -5711,11 +5644,13 @@ function ScheduledDrawerForm(props: {
         <TextInput value={action.title} onChange={(v) => props.onChange({ ...action, title: v })} />
       </Field>
       <Field label="描述（可选）">
-        <MarkdownEditor
-          value={action.description}
+        <SimpleEditor
+          content={action.description}
           onChange={(v) => props.onChange({ ...action, description: v })}
-          placeholder="输入详细描述，支持 Markdown 格式"
-          contentClassName="project-md-editor__content--tall"
+          placeholder="输入详细描述"
+          wrapperClassName="simple-editor-wrapper--embedded rounded-md border border-[#E6E8F0] bg-white"
+          contentClassName="max-h-[26rem]"
+          showThemeToggle={false}
         />
       </Field>
       <Field label="开始时间">
@@ -5815,11 +5750,13 @@ function TaskDrawerForm(props: {
       </Field>
 
       <Field label="任务描述（可选）">
-        <MarkdownEditor
-          value={t.description}
+        <SimpleEditor
+          content={t.description}
           onChange={(v) => props.onChange({ ...t, description: v })}
-          placeholder="输入任务描述，支持 Markdown 格式"
-          contentClassName="project-md-editor__content--tall"
+          placeholder="输入任务描述"
+          wrapperClassName="simple-editor-wrapper--embedded rounded-md border border-[#E6E8F0] bg-white"
+          contentClassName="max-h-[26rem]"
+          showThemeToggle={false}
         />
       </Field>
 
