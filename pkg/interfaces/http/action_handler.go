@@ -244,6 +244,21 @@ func (h *ActionHandler) List(c context.Context, ctx *app.RequestContext) {
 			q.ContextIDs = append(q.ContextIDs, v)
 		}
 	}
+	if tagsStr := strings.TrimSpace(ctx.Query("tags")); tagsStr != "" {
+		tags := strings.Split(tagsStr, ",")
+		seen := make(map[string]struct{})
+		for _, tag := range tags {
+			v := strings.TrimSpace(tag)
+			if v == "" {
+				continue
+			}
+			if _, exists := seen[v]; exists {
+				continue
+			}
+			seen[v] = struct{}{}
+			q.Tags = append(q.Tags, v)
+		}
+	}
 	sorts, err := parseActionSort(ctx)
 	if err != nil {
 		writeActionErr(ctx, err)

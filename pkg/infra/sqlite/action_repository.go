@@ -198,6 +198,14 @@ func applyActionFilters(base string, q domain.ActionListQuery, args []any) (stri
 		}
 		base += " AND EXISTS (SELECT 1 FROM json_each(context) WHERE value IN (" + strings.Join(placeholders, ", ") + "))"
 	}
+	if len(q.Tags) > 0 {
+		placeholders := make([]string, len(q.Tags))
+		for i, tag := range q.Tags {
+			placeholders[i] = "?"
+			args = append(args, strings.ToLower(strings.TrimSpace(tag)))
+		}
+		base += " AND EXISTS (SELECT 1 FROM json_each(labels) WHERE LOWER(json_extract(value, '$.name')) IN (" + strings.Join(placeholders, ", ") + "))"
+	}
 	return base, args
 }
 

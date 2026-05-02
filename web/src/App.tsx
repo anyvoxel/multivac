@@ -119,39 +119,10 @@ type ScheduledDraft = {
   endAt?: string;
 };
 
-function parseLabelFilterInput(input: string): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const token of input.split(/\s+/)) {
-    const normalized = token.trim().toLowerCase();
-    if (!normalized) continue;
-    const value = normalized.startsWith("@") || normalized.startsWith("#") ? normalized.slice(1) : normalized;
-    if (!value || seen.has(value)) continue;
-    seen.add(value);
-    out.push(value);
-  }
-  return out;
-}
-
-
 function tokenToLabel(token: string): Label | null {
-  const raw = token.trim();
-  if (!raw) return null;
-  let value = raw;
-  let kind: Label["kind"] = "Tag";
-  let filterable = false;
-  if (raw.startsWith("@")) {
-    value = raw.slice(1).trim();
-    kind = "Context";
-    filterable = true;
-  } else if (raw.startsWith("#")) {
-    value = raw.slice(1).trim();
-    kind = "Tag";
-    filterable = true;
-  }
-  value = value.toLowerCase();
+  const value = token.trim();
   if (!value) return null;
-  return { value, kind, filterable };
+  return { value };
 }
 
 function parseLabelsInput(input: string): Label[] {
@@ -160,9 +131,8 @@ function parseLabelsInput(input: string): Label[] {
   for (const token of input.split(/\s+/)) {
     const label = tokenToLabel(token);
     if (!label) continue;
-    const key = `${label.kind}:${label.value}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
+    if (seen.has(label.value)) continue;
+    seen.add(label.value);
     out.push(label);
   }
   return out;
@@ -615,11 +585,12 @@ function IconSort(props: { dir: SortDir | null }) {
 }
 
 export default function App() {
-  const [route, setRoute] = useState<Route>("projects");
+  const [route, setRoute] = useState<Route>("tasks");
 
   const [search, setSearch] = useState<string>("");
-  const [tagFilterInput, setTagFilterInput] = useState<string>("");
+  const [tagFilter, setTagFilter] = useState<string[]>([]);
   const [taskContextIds, setTaskContextIds] = useState<string[]>([]);
+  const [taskStatusFilter, setTaskStatusFilter] = useState<TaskStatus[]>(["Pending", "Active"]);
 
   // Projects list page state
   const [loading, setLoading] = useState(false);
@@ -752,7 +723,6 @@ export default function App() {
   });
 
   const normalizedSearch = search.trim();
-  const normalizedTags = parseLabelFilterInput(tagFilterInput);
 
   function setDrawerInbox(next: Inbox | null) {
     drawerInboxRef.current = next;
@@ -1079,7 +1049,7 @@ export default function App() {
         listTasks({
           search: normalizedSearch || undefined,
           contextIds: taskContextIds.length > 0 ? taskContextIds : undefined,
-          tags: normalizedTags.length ? normalizedTags : undefined,
+          tags: tagFilter.length > 0 ? tagFilter : undefined,
           sortBy: "DueAt",
           sortDir: "Asc",
         }),
@@ -1098,7 +1068,7 @@ export default function App() {
 
   useEffect(() => {
     setProjectOffset(0);
-  }, [projectStatusFilter, search, tagFilterInput, projectPageSize]);
+  }, [projectStatusFilter, search, tagFilter, projectPageSize]);
 
   useEffect(() => {
     setInboxOffset(0);
@@ -1177,7 +1147,7 @@ export default function App() {
     if (route !== "schedule") return;
     void refreshSchedule();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route, normalizedSearch, taskContextIds, tagFilterInput]);
+  }, [route, normalizedSearch, taskContextIds, tagFilter]);
 
   const pageLabelMap: Record<Route, string> = {
     projects: "项目管理",
@@ -1624,11 +1594,11 @@ export default function App() {
           <div className="px-2 pb-3 pt-4 text-sm font-semibold text-[#6B7280]">专注</div>
           <nav className="grid gap-1 px-2">
             <NavItemLight
-              active={route === "inboxes"}
-              icon={<IconInbox />}
-              label="收集箱"
+              active={route === "tasks"}
+              icon={<IconTask />}
+              label="下一步"
               onClick={() => {
-                setRoute("inboxes");
+                setRoute("tasks");
                 setSearch("");
               }}
             />
@@ -1646,38 +1616,20 @@ export default function App() {
           <div className="px-2 pb-3 pt-8 text-sm font-semibold text-[#6B7280]">列表</div>
           <nav className="grid gap-1 px-2">
             <NavItemLight
+              active={route === "inboxes"}
+              icon={<IconInbox />}
+              label="收集箱"
+              onClick={() => {
+                setRoute("inboxes");
+                setSearch("");
+              }}
+            />
+            <NavItemLight
               active={route === "projects"}
               icon={<IconProject />}
               label="项目"
               onClick={() => {
                 setRoute("projects");
-                setSearch("");
-              }}
-            />
-            <NavItemLight
-              active={route === "tasks"}
-              icon={<IconTask />}
-              label="下一步"
-              onClick={() => {
-                setRoute("tasks");
-                setSearch("");
-              }}
-            />
-            <NavItemLight
-              active={route === "contexts"}
-              icon={<IconClock />}
-              label="情境"
-              onClick={() => {
-                setRoute("contexts");
-                setSearch("");
-              }}
-            />
-            <NavItemLight
-              active={route === "references"}
-              icon={<IconInbox />}
-              label="资料"
-              onClick={() => {
-                setRoute("references");
                 setSearch("");
               }}
             />
@@ -1700,6 +1652,28 @@ export default function App() {
               }}
             />
           </nav>
+
+          <div className="px-2 pb-3 pt-8 text-sm font-semibold text-[#6B7280]">整理</div>
+          <nav className="grid gap-1 px-2">
+            <NavItemLight
+              active={route === "contexts"}
+              icon={<IconClock />}
+              label="情境"
+              onClick={() => {
+                setRoute("contexts");
+                setSearch("");
+              }}
+            />
+            <NavItemLight
+              active={route === "references"}
+              icon={<IconInbox />}
+              label="资料"
+              onClick={() => {
+                setRoute("references");
+                setSearch("");
+              }}
+            />
+          </nav>
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
@@ -1711,53 +1685,29 @@ export default function App() {
                 <span>{pageLabel}</span>
               </div>
               <div className="flex items-center gap-2">
-                <div className="relative">
-                  <div className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[#9CA3AF]">
-                    <IconSearch />
-                  </div>
-                  <input
-                    className="w-64 rounded-md border border-[#E6E8F0] bg-white py-1.5 pl-8 pr-9 text-sm outline-none focus:ring-2 focus:ring-[#4F46E5]"
-                    placeholder="搜索..."
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                  />
-                  {search ? (
-                    <button
-                      type="button"
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-[#9CA3AF] hover:text-[#6B7280]"
-                      onClick={() => setSearch("")}
-                      aria-label="清空搜索"
-                    >
-                      <IconClear />
-                    </button>
-                  ) : null}
-                </div>
-                {route === "schedule" ? (
-                  <>
-                    <select
-                      multiple
-                      className="w-36 rounded-md border border-[#E6E8F0] bg-white px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#4F46E5]"
-                      value={taskContextIds}
-                      onChange={(e) => {
-                        const selected = Array.from(e.target.selectedOptions, (opt) => opt.value);
-                        setTaskContextIds(selected.filter((v) => v !== ""));
-                      }}
-                    >
-                      <option value="">全部情境</option>
-                      {contexts.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.title}
-                        </option>
-                      ))}
-                    </select>
+                {route !== "schedule" && (
+                  <div className="relative">
+                    <div className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[#9CA3AF]">
+                      <IconSearch />
+                    </div>
                     <input
-                      className="w-36 rounded-md border border-[#E6E8F0] bg-white px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#4F46E5]"
-                      placeholder="标签(#urgent)"
-                      value={tagFilterInput}
-                      onChange={(e) => setTagFilterInput(e.target.value)}
+                      className="w-64 rounded-md border border-[#E6E8F0] bg-white py-1.5 pl-8 pr-9 text-sm outline-none focus:ring-2 focus:ring-[#4F46E5]"
+                      placeholder="搜索..."
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
                     />
-                  </>
-                ) : null}
+                    {search ? (
+                      <button
+                        type="button"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-[#9CA3AF] hover:text-[#6B7280]"
+                        onClick={() => setSearch("")}
+                        aria-label="清空搜索"
+                      >
+                        <IconClear />
+                      </button>
+                    ) : null}
+                  </div>
+                )}
                 <button
                   className="flex items-center justify-center rounded-md border border-[#E6E8F0] bg-white p-2 text-[#6B7280] hover:bg-[#F5F6FA]"
                   type="button"
@@ -1844,14 +1794,16 @@ export default function App() {
                 contexts={contexts}
                 projectId={taskProjectId}
                 contextIds={taskContextIds}
+                statusFilter={taskStatusFilter}
                 search={normalizedSearch}
-                tagFilterInput={tagFilterInput}
+                tagFilter={tagFilter}
                 version={taskListVersion}
                 highlightTaskId={highlightTaskId}
                 onProjectId={setTaskProjectId}
                 onContextIds={setTaskContextIds}
+                onStatusFilter={setTaskStatusFilter}
                 onSearch={setSearch}
-                onTagFilterInput={setTagFilterInput}
+                onTagFilter={setTagFilter}
                 onOpen={(id, t) => void openTaskDrawer("edit", id, t)}
               />
             ) : route === "inboxes" ? (
@@ -2336,7 +2288,7 @@ export default function App() {
             )}
           </CenteredDialog>
         ) : drawer.type !== "none" ? (
-          <Drawer
+          <CenteredDialog
             title={
               drawer.type === "task"
                 ? "下一步详情"
@@ -2364,7 +2316,7 @@ export default function App() {
             }
           >
             {drawerLoading ? (
-              <div className="px-4 py-6 text-sm text-[#6B7280]">加载中...</div>
+              <div className="px-6 py-8 text-sm text-[#6B7280]">加载中...</div>
             ) : drawer.type === "task" ? (
               <TaskDrawerForm
                 task={drawerTask}
@@ -2440,7 +2392,7 @@ export default function App() {
                 } : undefined}
               />
             )}
-          </Drawer>
+          </CenteredDialog>
         ) : null}
       </div>
     </div>
@@ -2772,7 +2724,7 @@ const MIN_PROJECT_COLUMN_WIDTHS: ProjectColumnWidths = {
   actions: 100,
 };
 
-type TaskColumnKey = "name" | "status" | "project" | "dueAt" | "actions";
+type TaskColumnKey = "name" | "labels" | "status" | "project" | "dueAt" | "actions";
 
 type TaskColumnWidths = Record<TaskColumnKey, number>;
 
@@ -2784,6 +2736,7 @@ type TaskResizeState = {
 
 const DEFAULT_TASK_COLUMN_WIDTHS: TaskColumnWidths = {
   name: 360,
+  labels: 150,
   status: 100,
   project: 280,
   dueAt: 180,
@@ -2794,6 +2747,7 @@ const TASK_COLUMN_WIDTHS_STORAGE_KEY = "multivac:task-column-widths";
 
 const MIN_TASK_COLUMN_WIDTHS: TaskColumnWidths = {
   name: 220,
+  labels: 100,
   status: 80,
   project: 180,
   dueAt: 140,
@@ -2955,6 +2909,7 @@ function normalizeTaskColumnWidths(value: unknown): TaskColumnWidths {
   const widths = typeof value === "object" && value !== null ? value as Partial<Record<TaskColumnKey, unknown>> : {};
   return {
     name: typeof widths.name === "number" ? Math.max(MIN_TASK_COLUMN_WIDTHS.name, widths.name) : DEFAULT_TASK_COLUMN_WIDTHS.name,
+    labels: typeof widths.labels === "number" ? Math.max(MIN_TASK_COLUMN_WIDTHS.labels, widths.labels) : DEFAULT_TASK_COLUMN_WIDTHS.labels,
     status: typeof widths.status === "number" ? Math.max(MIN_TASK_COLUMN_WIDTHS.status, widths.status) : DEFAULT_TASK_COLUMN_WIDTHS.status,
     project: typeof widths.project === "number" ? Math.max(MIN_TASK_COLUMN_WIDTHS.project, widths.project) : DEFAULT_TASK_COLUMN_WIDTHS.project,
     dueAt: typeof widths.dueAt === "number" ? Math.max(MIN_TASK_COLUMN_WIDTHS.dueAt, widths.dueAt) : DEFAULT_TASK_COLUMN_WIDTHS.dueAt,
@@ -4014,6 +3969,13 @@ function SchedulePage(props: {
     return new Map(props.projects.map((project) => [project.id, project.title]));
   }, [props.projects]);
 
+  const overdueEntries = useMemo(
+    () => scheduleEntries.filter((entry) => {
+      const entryDate = startOfLocalDay(new Date(entry.dateISO));
+      return entryDate < today;
+    }),
+    [scheduleEntries, today],
+  );
   const dueSoonToday = useMemo(
     () => scheduleEntries.filter((entry) => isSameLocalDay(entry.dateISO, today)),
     [scheduleEntries, today],
@@ -4047,6 +4009,7 @@ function SchedulePage(props: {
   }
 
   function renderEntry(entry: ScheduleEntry, compact = false) {
+    const isOverdue = startOfLocalDay(new Date(entry.dateISO)) < today;
     const secondary =
       entry.kind === "Task"
         ? entry.projectId
@@ -4056,8 +4019,9 @@ function SchedulePage(props: {
           ? entry.owner || "未指定负责人"
           : `${formatDateTime(entry.startAt || entry.dateISO)} - ${formatDateTime(entry.endAt || entry.dateISO)}`;
 
-    const cardClass =
-      entry.kind === "Task"
+    const cardClass = isOverdue
+      ? "border-[#FCA5A5] bg-[#FEF2F2]"
+      : entry.kind === "Task"
         ? "border-[#C7D2FE] bg-[#EEF2FF]/60"
         : entry.kind === "WaitingFor"
           ? "border-[#FDE68A] bg-[#FFFBEB]"
@@ -4071,6 +4035,7 @@ function SchedulePage(props: {
           "grid w-full gap-2 rounded-lg border px-3 py-2 text-left transition-colors hover:bg-[#F9FAFB]",
           cardClass,
           compact && "px-2 py-2",
+          isOverdue && "border-l-4 border-l-[#EF4444]",
         )}
         onClick={(e) => {
           e.stopPropagation();
@@ -4125,22 +4090,44 @@ function SchedulePage(props: {
         </button>
       </div>
 
-      <div className="grid gap-4 rounded-lg border border-[#E6E8F0] bg-white p-4">
-        <div className="flex items-center gap-2 text-base font-semibold text-[#111827]">
-          <IconClock />
-          今天应完成
+      {props.loading ? (
+        <div className="rounded-lg border border-[#E6E8F0] bg-[#F9FAFB] px-4 py-8 text-center text-sm text-[#9CA3AF]">
+          正在加载日程...
         </div>
-        {props.loading ? (
-          <div className="rounded-lg border border-dashed border-[#D1D5DB] bg-[#F9FAFB] px-4 py-8 text-center text-sm text-[#9CA3AF]">
-            正在加载日程...
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className={classNames(
+            "grid gap-4 rounded-lg p-4",
+            overdueEntries.length > 0 ? "border border-[#FCA5A5] bg-[#FEF2F2]" : "border border-[#E6E8F0] bg-white"
+          )}>
+            <div className={classNames(
+              "flex items-center gap-2 text-base font-semibold",
+              overdueEntries.length > 0 ? "text-[#DC2626]" : "text-[#111827]"
+            )}>
+              <IconClock />
+              已过期（需处理）
+            </div>
+            {overdueEntries.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-[#D1D5DB] bg-white px-4 py-6 text-center text-sm text-[#9CA3AF]">
+                暂无过期事项
+              </div>
+            ) : (
+              <div className="grid gap-3">{overdueEntries.map((entry) => renderEntry(entry))}</div>
+            )}
           </div>
-        ) : (
-          <div className="grid gap-4 lg:grid-cols-2">
-            {renderAgendaColumn("今天", formatMonthDay(today), dueSoonToday)}
-            {renderAgendaColumn("明天", formatMonthDay(tomorrow), dueSoonTomorrow)}
+
+          <div className="grid gap-4 rounded-lg border border-[#E6E8F0] bg-white p-4">
+            <div className="flex items-center gap-2 text-base font-semibold text-[#111827]">
+              <IconClock />
+              最近需完成
+            </div>
+            <div className="grid gap-4">
+              {renderAgendaColumn("今天", formatMonthDay(today), dueSoonToday)}
+              {renderAgendaColumn("明天", formatMonthDay(tomorrow), dueSoonTomorrow)}
+            </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       <div className="grid gap-4 rounded-lg border border-[#E6E8F0] bg-white p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -4224,14 +4211,16 @@ function TasksPageNew(props: {
   contexts: ManagedContext[];
   projectId: string;
   contextIds: string[];
+  statusFilter: TaskStatus[];
   search: string;
-  tagFilterInput: string;
+  tagFilter: string[];
   version: number;
   highlightTaskId: string | null;
   onProjectId: (v: string) => void;
   onContextIds: (v: string[]) => void;
+  onStatusFilter: (v: TaskStatus[]) => void;
   onSearch: (v: string) => void;
-  onTagFilterInput: (v: string) => void;
+  onTagFilter: (v: string[]) => void;
   onOpen: (id: string, t?: Task) => void;
 }) {
   const [loading, setLoading] = useState(false);
@@ -4242,7 +4231,10 @@ function TasksPageNew(props: {
   const [hasNext, setHasNext] = useState(false);
   const [sortDir, setSortDir] = useState<SortDir | null>("Asc");
   const [columnWidths, setColumnWidths] = useState<TaskColumnWidths>(() => loadTaskColumnWidths());
+  const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
   const [contextDropdownOpen, setContextDropdownOpen] = useState(false);
+  const [tagDropdownOpen, setTagDropdownOpen] = useState(false);
+  const [tagInput, setTagInput] = useState("");
 
   useEffect(() => {
     window.localStorage.setItem(TASK_COLUMN_WIDTHS_STORAGE_KEY, JSON.stringify(columnWidths));
@@ -4323,9 +4315,10 @@ function TasksPageNew(props: {
     try {
       const list = await listTasks({
         projectId: props.projectId || undefined,
+        status: props.statusFilter.length > 0 ? props.statusFilter : undefined,
         search: props.search || undefined,
         contextIds: props.contextIds.length > 0 ? props.contextIds : undefined,
-        tags: parseLabelFilterInput(props.tagFilterInput),
+        tags: props.tagFilter.length > 0 ? props.tagFilter : undefined,
         sortBy: sortDir ? "DueAt" : undefined,
         sortDir: sortDir || undefined,
         limit: pageSize + 1,
@@ -4342,12 +4335,12 @@ function TasksPageNew(props: {
 
   useEffect(() => {
     setOffset(0);
-  }, [props.projectId, props.search, props.contextIds, props.tagFilterInput, sortDir, pageSize]);
+  }, [props.projectId, props.search, props.contextIds, props.tagFilter, props.statusFilter, sortDir, pageSize]);
 
   useEffect(() => {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.projectId, props.search, props.contextIds, props.tagFilterInput, props.version, sortDir, offset, pageSize]);
+  }, [props.projectId, props.search, props.contextIds, props.tagFilter, props.statusFilter, props.version, sortDir, offset, pageSize]);
 
   const projectNameById = useMemo(() => {
     return new Map(props.projects.map((p) => [p.id, p.title]));
@@ -4408,6 +4401,57 @@ function TasksPageNew(props: {
             <button
               type="button"
               className="flex min-h-[34px] min-w-[100px] items-center gap-1 rounded-md border border-[#E6E8F0] bg-white px-2 py-1.5 text-sm text-[#374151]"
+              onClick={() => setStatusDropdownOpen(!statusDropdownOpen)}
+              onBlur={() => setTimeout(() => setStatusDropdownOpen(false), 100)}
+            >
+              {props.statusFilter.length === 0 ? (
+                <span>全部状态</span>
+              ) : (
+                <div className="flex flex-wrap gap-1">
+                  {props.statusFilter.map((s) => (
+                    <span key={s} className="rounded bg-[#E6E8F0] px-1 text-xs text-[#374151]">
+                      {taskStatusLabel(s)}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <span className="ml-auto text-[#9CA3AF]">▼</span>
+            </button>
+            {statusDropdownOpen ? (
+              <div className="absolute z-10 mt-1 w-36 overflow-auto rounded-md border border-[#E6E8F0] bg-white shadow-sm">
+                {(["Pending", "Active", "Completed"] as TaskStatus[]).map((s) => {
+                  const isSelected = props.statusFilter.includes(s);
+                  return (
+                    <button
+                      key={s}
+                      type="button"
+                      className={classNames(
+                        "flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-[#F5F6FA]",
+                        isSelected && "bg-[#EEF2FF]",
+                      )}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        if (isSelected) {
+                          props.onStatusFilter(props.statusFilter.filter((x) => x !== s));
+                        } else {
+                          props.onStatusFilter([...props.statusFilter, s]);
+                        }
+                      }}
+                    >
+                      <Badge color={taskStatusColor(s)}>{taskStatusLabel(s)}</Badge>
+                      {isSelected ? (
+                        <span className="ml-auto text-[#4F46E5]">✓</span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
+          <div className="relative">
+            <button
+              type="button"
+              className="flex min-h-[34px] min-w-[100px] items-center gap-1 rounded-md border border-[#E6E8F0] bg-white px-2 py-1.5 text-sm text-[#374151]"
               onClick={() => setContextDropdownOpen(!contextDropdownOpen)}
               onBlur={() => setTimeout(() => setContextDropdownOpen(false), 100)}
             >
@@ -4454,12 +4498,71 @@ function TasksPageNew(props: {
               </div>
             ) : null}
           </div>
-          <input
-            className="w-28 rounded-md border border-[#E6E8F0] bg-white px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#4F46E5]"
-            placeholder="标签(#urgent)"
-            value={props.tagFilterInput}
-            onChange={(e) => props.onTagFilterInput(e.target.value)}
-          />
+          <div
+            className="relative"
+            onBlur={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget)) {
+                setTagDropdownOpen(false);
+              }
+            }}
+          >
+            <button
+              type="button"
+              className="flex min-h-[34px] min-w-[100px] items-center gap-1 rounded-md border border-[#E6E8F0] bg-white px-2 py-1.5 text-sm text-[#374151]"
+              onClick={() => setTagDropdownOpen(!tagDropdownOpen)}
+            >
+              {props.tagFilter.length === 0 ? (
+                <span>全部标签</span>
+              ) : (
+                <div className="flex flex-wrap gap-1">
+                  {props.tagFilter.map((tag) => (
+                    <span
+                      key={tag}
+                      className="rounded bg-[#E6E8F0] px-1 text-xs text-[#374151]"
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <span className="ml-auto text-[#9CA3AF]">▼</span>
+            </button>
+            {tagDropdownOpen ? (
+              <div className="absolute z-10 mt-1 w-48 rounded-md border border-[#E6E8F0] bg-white p-2 shadow-sm">
+                <input
+                  className="w-full rounded border border-[#E6E8F0] px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-[#4F46E5]"
+                  placeholder="输入标签后回车"
+                  value={tagInput}
+                  onChange={(e) => setTagInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      const tag = tagInput.trim();
+                      if (tag && !props.tagFilter.includes(tag)) {
+                        props.onTagFilter([...props.tagFilter, tag]);
+                      }
+                      setTagInput("");
+                    }
+                  }}
+                />
+                {props.tagFilter.length > 0 ? (
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {props.tagFilter.map((tag) => (
+                      <button
+                        key={tag}
+                        type="button"
+                        className="flex items-center gap-1 rounded bg-[#E6E8F0] px-1 text-xs text-[#374151] hover:bg-[#D1D5DB]"
+                        onClick={() => props.onTagFilter(props.tagFilter.filter((t) => t !== tag))}
+                      >
+                        {tag}
+                        <span className="text-[#6B7280]">×</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
           <button
             className="flex items-center gap-1 rounded-md border border-[#E6E8F0] bg-white px-3 py-1 text-sm text-[#374151] hover:bg-[#F5F6FA]"
             type="button"
@@ -4481,6 +4584,7 @@ function TasksPageNew(props: {
         <table className="w-full min-w-[860px] table-fixed text-left text-sm">
           <colgroup>
             <col style={{ width: columnWidths.name }} />
+            <col style={{ width: columnWidths.labels }} />
             <col style={{ width: columnWidths.status }} />
             <col style={{ width: columnWidths.project }} />
             <col style={{ width: columnWidths.dueAt }} />
@@ -4489,6 +4593,7 @@ function TasksPageNew(props: {
           <thead className="bg-[#F9FAFB] text-xs text-[#6B7280]">
             <tr>
               {headerCell("下一步", "name")}
+              {headerCell("标签", "labels")}
               {headerCell("状态", "status")}
               {headerCell("所属项目", "project")}
               {headerCell("截止日期", "dueAt")}
@@ -4498,20 +4603,25 @@ function TasksPageNew(props: {
           <tbody>
             {items.length === 0 && !loading ? (
               <tr>
-                <td colSpan={5} className="px-4 py-10 text-center text-[#6B7280]">
+                <td colSpan={6} className="px-4 py-10 text-center text-[#6B7280]">
                   暂无下一步
                 </td>
               </tr>
             ) : null}
-            {items.map((t) => (
-              <tr
-                key={t.id}
-                id={`task-row-${t.id}`}
-                className={classNames(
-                  "border-t border-[#E6E8F0] hover:bg-[#F9FAFB]",
-                  props.highlightTaskId === t.id && "bg-[#EEF2FF] transition-colors",
-                )}
-              >
+            {items.map((t) => {
+              const isOverdue = t.dueAt && t.status !== "Completed" && startOfLocalDay(new Date(t.dueAt)) < startOfLocalDay(new Date());
+              return (
+                <tr
+                  key={t.id}
+                  id={`task-row-${t.id}`}
+                  className={classNames(
+                    "border-t border-[#E6E8F0]",
+                    isOverdue
+                      ? "bg-[#FEF2F2] border-l-4 border-l-[#EF4444]"
+                      : "hover:bg-[#F9FAFB]",
+                    props.highlightTaskId === t.id && "bg-[#EEF2FF] transition-colors",
+                  )}
+                >
                 <td className="px-4 py-3">
                   <div className="flex flex-col gap-1">
                     <div className="font-medium text-[#111827]">{t.name}</div>
@@ -4533,6 +4643,22 @@ function TasksPageNew(props: {
                       </div>
                     ) : null}
                   </div>
+                </td>
+                <td className="px-4 py-3">
+                  {t.labels.length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {t.labels.map((label, idx) => (
+                        <span
+                          key={`${label.value}-${idx}`}
+                          className="rounded-full bg-[#E6E8F0] px-2 py-0.5 text-xs text-[#374151]"
+                        >
+                          {label.value}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-[#9CA3AF]">-</span>
+                  )}
                 </td>
                 <td className="px-4 py-3">
                   <Badge color={taskStatusColor(t.status)}>
@@ -4558,7 +4684,8 @@ function TasksPageNew(props: {
                   </button>
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -4598,31 +4725,6 @@ function TasksPageNew(props: {
             下一页
           </button>
         </div>
-      </div>
-    </div>
-  );
-}
-
-function Drawer(props: { title: string; action: ReactNode; onClose: () => void; children: ReactNode }) {
-  return (
-    <div className="fixed inset-0 z-50 flex">
-      <div className="flex-1 bg-black/20" onClick={props.onClose} />
-      <div className="h-full w-[420px] border-l border-[#E6E8F0] bg-white shadow-xl">
-        <div className="flex items-center justify-between border-b border-[#E6E8F0] px-4 py-3">
-          <div className="text-sm font-semibold text-[#111827]">{props.title}</div>
-          <div className="flex items-center gap-2">
-            {props.action}
-            <button
-              className="flex items-center justify-center rounded-md border border-[#E6E8F0] bg-white p-2 text-[#6B7280] hover:bg-[#F5F6FA]"
-              type="button"
-              onClick={props.onClose}
-              aria-label="close"
-            >
-              <IconClose />
-            </button>
-          </div>
-        </div>
-        <div className="h-[calc(100%-52px)] overflow-auto">{props.children}</div>
       </div>
     </div>
   );
@@ -4809,8 +4911,7 @@ function SearchableProjectSelect(props: {
 }
 
 function labelText(label: Label): string {
-  if (!label.filterable) return label.value;
-  return label.kind === "Context" ? `@${label.value}` : `#${label.value}`;
+  return label.value;
 }
 
 function LabelEditor(props: { labels: Label[]; onChange: (labels: Label[]) => void; placeholder?: string }) {
@@ -4822,13 +4923,12 @@ function LabelEditor(props: { labels: Label[]; onChange: (labels: Label[]) => vo
       setInput("");
       return;
     }
-    const existingKeys = new Set(props.labels.map((label) => `${label.kind}:${label.value}`));
+    const existingKeys = new Set(props.labels.map((label) => label.value));
     const next = [...props.labels];
     for (const label of parsed) {
-      const key = `${label.kind}:${label.value}`;
-      if (existingKeys.has(key)) continue;
+      if (existingKeys.has(label.value)) continue;
       next.push(label);
-      existingKeys.add(key);
+      existingKeys.add(label.value);
     }
     props.onChange(next);
     setInput("");
@@ -4838,7 +4938,7 @@ function LabelEditor(props: { labels: Label[]; onChange: (labels: Label[]) => vo
     <div className="grid gap-2">
       <div className="flex flex-wrap gap-2">
         {props.labels.map((label, index) => (
-          <div key={`${label.kind}-${label.value}-${index}`} className="flex items-center gap-2 rounded-full border border-[#E6E8F0] bg-white px-2 py-1 text-xs">
+          <div key={`${label.value}-${index}`} className="flex items-center gap-2 rounded-full border border-[#E6E8F0] bg-white px-2 py-1 text-xs">
             <span className="font-medium text-[#111827]">{labelText(label)}</span>
             <button
               type="button"
@@ -5455,27 +5555,38 @@ function WaitingListsPage(props: {
                 </td>
               </tr>
             ) : null}
-            {props.items.map((waitingList) => (
-              <tr key={waitingList.id} className="border-t border-[#E6E8F0] hover:bg-[#F9FAFB]">
-                <td className="px-4 py-3">
-                  <div className="font-medium text-[#111827]">{waitingList.name}</div>
-                </td>
-                <td className="px-4 py-3 text-[#6B7280]">
-                  <div className="truncate">{waitingList.owner || "-"}</div>
-                </td>
-                <td className="px-4 py-3 text-[#6B7280]">{waitingList.expectedAt ? formatDateTime(waitingList.expectedAt) : "-"}</td>
-                <td className="px-4 py-3 text-[#6B7280]">{formatDate(waitingList.updatedAt)}</td>
-                <td className="px-4 py-3 text-right">
-                  <button
-                    type="button"
-                    className="text-sm font-medium text-[#4F46E5] hover:underline"
-                    onClick={() => props.onOpen(waitingList.id, waitingList)}
-                  >
-                    详情 →
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {props.items.map((waitingList) => {
+              const isOverdue = waitingList.expectedAt && startOfLocalDay(new Date(waitingList.expectedAt)) < startOfLocalDay(new Date());
+              return (
+                <tr
+                  key={waitingList.id}
+                  className={classNames(
+                    "border-t border-[#E6E8F0]",
+                    isOverdue
+                      ? "bg-[#FEF2F2] border-l-4 border-l-[#EF4444]"
+                      : "hover:bg-[#F9FAFB]",
+                  )}
+                >
+                  <td className="px-4 py-3">
+                    <div className="font-medium text-[#111827]">{waitingList.name}</div>
+                  </td>
+                  <td className="px-4 py-3 text-[#6B7280]">
+                    <div className="truncate">{waitingList.owner || "-"}</div>
+                  </td>
+                  <td className="px-4 py-3 text-[#6B7280]">{waitingList.expectedAt ? formatDateTime(waitingList.expectedAt) : "-"}</td>
+                  <td className="px-4 py-3 text-[#6B7280]">{formatDate(waitingList.updatedAt)}</td>
+                  <td className="px-4 py-3 text-right">
+                    <button
+                      type="button"
+                      className="text-sm font-medium text-[#4F46E5] hover:underline"
+                      onClick={() => props.onOpen(waitingList.id, waitingList)}
+                    >
+                      详情 →
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

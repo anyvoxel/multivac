@@ -49,6 +49,7 @@ export type ListActionsQuery = {
   kind?: ActionKind;
   projectId?: string;
   contextIds?: string[];
+  tags?: string[];
   sortBy?: ActionSortBy;
   sortDir?: SortDir;
   limit?: number;
@@ -128,6 +129,7 @@ export async function listActions(q?: ListActionsQuery): Promise<Action[]> {
   if (q?.kind) sp.set("kind", q.kind);
   if (q?.projectId) sp.set("projectId", q.projectId);
   if (q?.contextIds?.length) sp.set("contextIds", q.contextIds.join(","));
+  if (q?.tags?.length) sp.set("tags", q.tags.join(","));
   const sortBy = toApiSortBy(q?.sortBy);
   if (sortBy) sp.set("sortBy", sortBy);
   if (q?.sortDir) sp.set("sortDir", q.sortDir);

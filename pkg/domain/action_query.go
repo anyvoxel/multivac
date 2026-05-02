@@ -24,6 +24,7 @@ type ListQuery struct {
 	ProjectID  *string
 	Status     *Status
 	ContextIDs []string
+	Tags       []string
 	Sorts      []Sort
 	Limit      int
 	Offset     int

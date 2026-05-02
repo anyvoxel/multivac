@@ -56,7 +56,7 @@ export type UpdateTaskInput = {
 
 export type ListTasksQuery = {
   projectId?: string;
-  status?: TaskStatus;
+  status?: TaskStatus[];
   search?: string;
   contextIds?: string[];
   tags?: string[];
@@ -68,31 +68,11 @@ export type ListTasksQuery = {
 
 function parseLabelName(name: string): Label {
   const raw = name.trim();
-  if (!raw) return { value: "", kind: "Tag", filterable: false };
-  if (raw.startsWith("@")) {
-    return {
-      value: raw.slice(1).trim().toLowerCase(),
-      kind: "Context",
-      filterable: true,
-    };
-  }
-  if (raw.startsWith("#")) {
-    return {
-      value: raw.slice(1).trim().toLowerCase(),
-      kind: "Tag",
-      filterable: true,
-    };
-  }
-  return {
-    value: raw.toLowerCase(),
-    kind: "Tag",
-    filterable: false,
-  };
+  return { value: raw };
 }
 
 function toActionLabel(label: Label): ActionLabel {
-  const prefix = label.filterable ? (label.kind === "Context" ? "@" : "#") : "";
-  return { name: `${prefix}${label.value}` };
+  return { name: label.value };
 }
 
 function normalizeTaskDueAt(value?: string): string | undefined {
@@ -147,16 +127,9 @@ function sortByDueAt(list: Task[], dir: SortDir): Task[] {
     .map((x) => x.item);
 }
 
-function matchesTags(task: Task, tags?: string[]): boolean {
-  if (!tags || tags.length === 0) return true;
-  const wanted = new Set(tags.map((tag) => tag.trim().toLowerCase()).filter(Boolean));
-  if (wanted.size === 0) return true;
-  return task.labels.some((label) => label.kind === "Tag" && wanted.has(label.value));
-}
-
-function matchesStatus(task: Task, status?: TaskStatus): boolean {
-  if (!status) return true;
-  return task.status === status;
+function matchesStatus(task: Task, status?: TaskStatus[]): boolean {
+  if (!status || status.length === 0) return true;
+  return status.includes(task.status);
 }
 
 export async function listTasksByProject(
@@ -169,7 +142,6 @@ export async function listTasksByProject(
 export async function listTasks(q?: ListTasksQuery): Promise<Task[]> {
   const needLocalProcess =
     q?.sortBy === "DueAt" ||
-    (q?.tags?.length ?? 0) > 0 ||
     !!q?.status;
 
   const actions = await listActions({
@@ -177,6 +149,7 @@ export async function listTasks(q?: ListTasksQuery): Promise<Task[]> {
     kind: "Task",
     projectId: q?.projectId,
     contextIds: q?.contextIds,
+    tags: q?.tags,
     sortDir: q?.sortDir,
     limit: needLocalProcess ? undefined : q?.limit,
     offset: needLocalProcess ? undefined : q?.offset,
@@ -184,7 +157,6 @@ export async function listTasks(q?: ListTasksQuery): Promise<Task[]> {
 
   let list = actions.filter((action) => action.kind === "Task").map(fromAction);
   list = list.filter((task) => matchesStatus(task, q?.status));
-  list = list.filter((task) => matchesTags(task, q?.tags));
 
   if (q?.sortBy === "DueAt") {
     list = sortByDueAt(list, q?.sortDir ?? "Asc");

@@ -5,12 +5,8 @@ export type ProjectReference = {
   URL: string;
 };
 
-export type LabelKind = "Context" | "Tag";
-
 export type Label = {
   value: string;
-  kind: LabelKind;
-  filterable: boolean;
 };
 
 export type Goal = {
